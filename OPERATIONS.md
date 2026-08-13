@@ -14,8 +14,8 @@ password manager controlled by PorsLabs.
 
 ## Backup and restore
 
-Railway Point-in-Time Recovery archives WAL continuously and keeps scheduled
-daily, weekly, and monthly restore points. Before a risky migration, also run:
+Railway Point-in-Time Recovery archives WAL continuously, creates incremental
+backups daily, and creates full backups weekly. Before a risky migration, also run:
 
 ```bash
 railway postgres pitr backup create --service Postgres --name pre-migration

@@ -54,8 +54,9 @@ aktif setelah konfigurasi SMTP diisi.
 `session_str` dan `api_hash` Telegram dienkripsi menggunakan Fernet sebelum
 masuk database. Sesi web dicatat di tabel `device_sessions`, sehingga pengguna
 dapat mencabut akses per browser melalui halaman **Keamanan**. PostgreSQL
-production dilindungi oleh Railway PITR dan jadwal backup harian, mingguan,
-serta bulanan. Prosedur operasional ada di `OPERATIONS.md`.
+production dilindungi oleh Railway PITR dengan backup incremental harian,
+full mingguan, dan arsip WAL berkelanjutan. Prosedur operasional ada di
+`OPERATIONS.md`.
 
 ## Local run
 
