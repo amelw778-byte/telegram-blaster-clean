@@ -15,8 +15,9 @@ from telethon.errors import FloodWaitError
 from telethon.sessions import StringSession
 from telethon.tl.types import Channel, Chat
 
+from app.auth import get_current_user, verify_csrf
 from app.database import get_db
-from app.models import TelegramAccount
+from app.models import TelegramAccount, User
 
 router = APIRouter()
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -46,10 +47,17 @@ def _prune_finished_jobs() -> None:
 
 # ─── GET /scraper ────────────────────────────────────────────────────────────
 @router.get("/scraper", response_class=HTMLResponse)
-async def scraper_page(request: Request, db: Session = Depends(get_db)):
+async def scraper_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     accounts = (
         db.query(TelegramAccount)
-        .filter(TelegramAccount.is_active == 1)
+        .filter(
+            TelegramAccount.user_id == current_user.id,
+            TelegramAccount.is_active == 1,
+        )
         .order_by(TelegramAccount.created_at)
         .all()
     )
@@ -65,14 +73,26 @@ async def scraper_start(
     request: Request,
     account_id: int = Form(...),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
 ):
     accounts = (
         db.query(TelegramAccount)
-        .filter(TelegramAccount.is_active == 1)
+        .filter(
+            TelegramAccount.user_id == current_user.id,
+            TelegramAccount.is_active == 1,
+        )
         .order_by(TelegramAccount.created_at)
         .all()
     )
-    account = db.get(TelegramAccount, account_id)
+    account = (
+        db.query(TelegramAccount)
+        .filter(
+            TelegramAccount.id == account_id,
+            TelegramAccount.user_id == current_user.id,
+        )
+        .first()
+    )
 
     if not account or not account.session_str:
         return _render(request, "scraper.html", {
@@ -88,6 +108,7 @@ async def scraper_start(
         "contacts": set(),
         "log": ["⏳ Menyambung ke Telegram..."],
         "total": 0,
+        "user_id": current_user.id,
     }
 
     # Jalankan scraping di background — tidak block HTTP response
@@ -181,8 +202,8 @@ async def _do_scrape(job_id: str, session_str: str, api_id: int, api_hash: str, 
 
 # ─── GET /api/scraper/{job_id}  (polling dari frontend) ─────────────────────
 @router.get("/api/scraper/{job_id}")
-def scraper_poll(job_id: str):
-    if job_id not in _jobs:
+def scraper_poll(job_id: str, current_user: User = Depends(get_current_user)):
+    if job_id not in _jobs or _jobs[job_id].get("user_id") != current_user.id:
         return JSONResponse({"error": "not_found"}, status_code=404)
     job = _jobs[job_id]
     return JSONResponse({
@@ -194,8 +215,8 @@ def scraper_poll(job_id: str):
 
 # ─── GET /scraper/download/{job_id}  (download TXT) ─────────────────────────
 @router.get("/scraper/download/{job_id}")
-def scraper_download(job_id: str):
-    if job_id not in _jobs:
+def scraper_download(job_id: str, current_user: User = Depends(get_current_user)):
+    if job_id not in _jobs or _jobs[job_id].get("user_id") != current_user.id:
         return PlainTextResponse("Job tidak ditemukan", status_code=404)
     job = _jobs[job_id]
     contacts = sorted(job.get("contacts", set()))

@@ -21,6 +21,7 @@ class BlastJob(Base):
     __tablename__ = "blast_jobs"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String(20), nullable=False, default="queued", index=True)
     message = Column(Text, nullable=False)
     image_path = Column(String, nullable=True)

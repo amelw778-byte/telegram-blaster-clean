@@ -27,7 +27,7 @@ class BlastManager:
         # Weak maps release locks after the last waiter finishes. A long-lived
         # Railway process therefore does not retain every target ever seen.
         self.account_locks: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
-        self.target_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+        self.target_locks: WeakValueDictionary[tuple[int, str], asyncio.Lock] = WeakValueDictionary()
         self.tasks: Dict[int, asyncio.Task] = {}
         self.enqueue_lock = asyncio.Lock()
         self._stop_flags: Dict[int, bool] = {}  # job_id → True berarti stop diminta
@@ -133,7 +133,12 @@ class BlastManager:
             with SessionLocal() as db:
                 account = db.get(TelegramAccount, account_id)
                 job = db.get(BlastJob, job_id)
-                if not account or not account.session_str or not job:
+                if (
+                    not account
+                    or not account.session_str
+                    or not job
+                    or account.user_id != job.user_id
+                ):
                     self._fail_many(db, recipient_ids, "Akun tidak ditemukan atau session Telegram kosong")
                     self._refresh_counts(db, job_id)
                     return
@@ -246,11 +251,16 @@ class BlastManager:
             if not recipient or recipient.status != "pending":
                 return "continue"
             target = recipient.normalized_username
+            job = db.get(BlastJob, job_id)
+            if not job:
+                return "continue"
+            user_id = job.user_id
 
-        target_lock = self.target_locks.get(target)
+        target_key = (user_id, target)
+        target_lock = self.target_locks.get(target_key)
         if target_lock is None:
             target_lock = asyncio.Lock()
-            self.target_locks[target] = target_lock
+            self.target_locks[target_key] = target_lock
 
         async with target_lock:
             with SessionLocal() as db:
@@ -265,6 +275,7 @@ class BlastManager:
                     .filter(
                         BlastRecipient.normalized_username == recipient.normalized_username,
                         BlastRecipient.id != recipient.id,
+                        BlastJob.user_id == job.user_id,
                         BlastRecipient.status == "sent",
                         BlastRecipient.sent_at >= job.created_at,
                     )

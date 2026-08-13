@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 from datetime import datetime
 from app.database import Base
 
@@ -6,6 +6,7 @@ class TelegramAccount(Base):
     __tablename__ = "telegram_accounts"
 
     id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     label       = Column(String, nullable=True)          # nama/label akun
     phone       = Column(String, unique=True, nullable=False)
     session_str = Column(String, nullable=True)          # session Telethon (permanen)

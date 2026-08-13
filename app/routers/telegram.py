@@ -16,8 +16,9 @@ from telethon import TelegramClient
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from telethon.sessions import StringSession
 
+from app.auth import get_current_user, verify_csrf
 from app.database import DB_PATH, get_db
-from app.models import BlastJob, BlastRecipient, TelegramAccount
+from app.models import BlastJob, BlastRecipient, TelegramAccount, User
 from app.services.blast_manager import blast_manager
 
 router = APIRouter()
@@ -60,7 +61,7 @@ def _normalize_username(raw: str) -> tuple[str, str] | None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/connect-telegram", response_class=HTMLResponse)
-async def connect_page(request: Request):
+async def connect_page(request: Request, _user: User = Depends(get_current_user)):
     return _render(request, "connect_telegram.html", {"step": "connect"})
 
 
@@ -71,6 +72,8 @@ async def connect_submit(
     api_id: int = Form(...),
     api_hash: str = Form(...),
     label: str = Form(""),
+    _user: User = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
 ):
     try:
         client = TelegramClient(StringSession(), api_id, api_hash)
@@ -117,6 +120,8 @@ async def resend_otp(
     api_id: int = Form(...),
     api_hash: str = Form(...),
     label: str = Form(""),
+    _user: User = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
 ):
     try:
         client = TelegramClient(StringSession(), api_id, api_hash)
@@ -167,6 +172,8 @@ async def verify_otp(
     phone_code_hash: str = Form(...),
     otp_code: str = Form(...),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
 ):
     try:
         client = TelegramClient(StringSession(session_str), api_id, api_hash)
@@ -175,7 +182,9 @@ async def verify_otp(
             await client.sign_in(phone=phone, code=otp_code, phone_code_hash=phone_code_hash)
             final_session = client.session.save()
             await client.disconnect()
-            return await _save_account(request, db, phone, api_id, api_hash, label, final_session)
+            return await _save_account(
+                request, db, current_user, phone, api_id, api_hash, label, final_session
+            )
         except SessionPasswordNeededError:
             saved_session = client.session.save()
             await client.disconnect()
@@ -222,6 +231,8 @@ async def verify_2fa(
     session_str: str = Form(...),
     password_2fa: str = Form(...),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
 ):
     try:
         client = TelegramClient(StringSession(session_str), api_id, api_hash)
@@ -229,7 +240,9 @@ async def verify_2fa(
         await client.sign_in(password=password_2fa)
         final_session = client.session.save()
         await client.disconnect()
-        return await _save_account(request, db, phone, api_id, api_hash, label, final_session)
+        return await _save_account(
+            request, db, current_user, phone, api_id, api_hash, label, final_session
+        )
     except FloodWaitError as exc:
         return _render(request, "connect_telegram.html", {
             "step": "2fa",
@@ -252,10 +265,19 @@ async def verify_2fa(
         })
 
 
-async def _save_account(request, db, phone, api_id, api_hash, label, session_str):
-    """Simpan akun tanpa mengganti akun global milik tab lain."""
+async def _save_account(request, db, current_user, phone, api_id, api_hash, label, session_str):
+    """Simpan akun di ruang data pengguna yang sedang login."""
     existing = db.query(TelegramAccount).filter(TelegramAccount.phone == phone).first()
     if existing:
+        if existing.user_id != current_user.id:
+            return _render(request, "connect_telegram.html", {
+                "step": "connect",
+                "error_message": "Nomor Telegram ini sudah terhubung ke pengguna lain.",
+                "phone": phone,
+                "api_id": api_id,
+                "api_hash": api_hash,
+                "label": label,
+            })
         existing.session_str = session_str
         existing.api_id = api_id
         existing.api_hash = api_hash
@@ -265,6 +287,7 @@ async def _save_account(request, db, phone, api_id, api_hash, label, session_str
         account = existing
     else:
         account = TelegramAccount(
+            user_id=current_user.id,
             phone=phone,
             api_id=api_id,
             api_hash=api_hash,
@@ -289,9 +312,17 @@ async def _save_account(request, db, phone, api_id, api_hash, label, session_str
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.post("/switch-account/{account_id}")
-def switch_account(account_id: int, db: Session = Depends(get_db)):
+def switch_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
+):
     """Kompatibilitas lama: akun hanya ditandai terhubung, tidak mematikan akun lain."""
-    account = db.get(TelegramAccount, account_id)
+    account = db.query(TelegramAccount).filter(
+        TelegramAccount.id == account_id,
+        TelegramAccount.user_id == current_user.id,
+    ).first()
     if account:
         account.is_active = 1
         db.commit()
@@ -299,11 +330,21 @@ def switch_account(account_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/stop-job/{job_id}")
-def stop_job(job_id: int, db: Session = Depends(get_db)):
+def stop_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
+):
     """Hentikan blast job yang sedang berjalan secara graceful."""
+    job = db.query(BlastJob).filter(
+        BlastJob.id == job_id,
+        BlastJob.user_id == current_user.id,
+    ).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job tidak ditemukan")
     blast_manager.stop_job(job_id)
     # Pastikan recipient yang masih pending di-pause di DB
-    job = db.get(BlastJob, job_id)
     if job and job.status in ("running", "queued"):
         db.query(BlastRecipient).filter(
             BlastRecipient.job_id == job_id,
@@ -319,12 +360,24 @@ def stop_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/delete-account/{account_id}")
-def delete_account(account_id: int, db: Session = Depends(get_db)):
+def delete_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
+):
+    account = db.query(TelegramAccount).filter(
+        TelegramAccount.id == account_id,
+        TelegramAccount.user_id == current_user.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Akun tidak ditemukan")
     running = (
         db.query(BlastRecipient.id)
         .join(BlastJob, BlastJob.id == BlastRecipient.job_id)
         .filter(
             BlastRecipient.account_id == account_id,
+            BlastJob.user_id == current_user.id,
             BlastJob.status.in_(["queued", "running"]),
             BlastRecipient.status.in_(["pending", "sending"]),
         )
@@ -333,10 +386,8 @@ def delete_account(account_id: int, db: Session = Depends(get_db)):
     if running:
         return RedirectResponse(url="/dashboard?error=account_busy", status_code=303)
 
-    account = db.get(TelegramAccount, account_id)
-    if account:
-        db.delete(account)
-        db.commit()
+    db.delete(account)
+    db.commit()
     return _back_dashboard()
 
 
@@ -350,13 +401,20 @@ async def blast_page(
     account_id: int | None = None,
     job_id: int | None = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    accounts = db.query(TelegramAccount).filter(TelegramAccount.is_active == 1).order_by(TelegramAccount.created_at).all()
+    accounts = db.query(TelegramAccount).filter(
+        TelegramAccount.user_id == current_user.id,
+        TelegramAccount.is_active == 1,
+    ).order_by(TelegramAccount.created_at).all()
     if not accounts:
         return RedirectResponse(url="/dashboard", status_code=303)
 
     selected_ids = {account_id} if account_id and any(a.id == account_id for a in accounts) else {accounts[0].id}
-    job = db.get(BlastJob, job_id) if job_id else None
+    job = db.query(BlastJob).filter(
+        BlastJob.id == job_id,
+        BlastJob.user_id == current_user.id,
+    ).first() if job_id else None
     recipients = []
     if job:
         recipients = (
@@ -371,7 +429,9 @@ async def blast_page(
         except json.JSONDecodeError:
             pass
 
-    recent_jobs = db.query(BlastJob).order_by(BlastJob.created_at.desc()).limit(10).all()
+    recent_jobs = db.query(BlastJob).filter(
+        BlastJob.user_id == current_user.id
+    ).order_by(BlastJob.created_at.desc()).limit(10).all()
     return _render(request, "blast.html", {
         "accounts": accounts,
         "selected_ids": selected_ids,
@@ -393,18 +453,24 @@ async def send_blast(
     delay_max: float = Form(5.0),
     image: UploadFile | None = File(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
 ):
     if not consent_confirmed:
-        return await _blast_form_error(request, db, account_ids, usernames, message, "Konfirmasi penerima opt-in wajib dicentang.")
+        return await _blast_form_error(request, db, current_user, account_ids, usernames, message, "Konfirmasi penerima opt-in wajib dicentang.")
 
     accounts = (
         db.query(TelegramAccount)
-        .filter(TelegramAccount.id.in_(account_ids), TelegramAccount.is_active == 1)
+        .filter(
+            TelegramAccount.id.in_(account_ids),
+            TelegramAccount.user_id == current_user.id,
+            TelegramAccount.is_active == 1,
+        )
         .order_by(TelegramAccount.id)
         .all()
     )
     if not accounts:
-        return await _blast_form_error(request, db, account_ids, usernames, message, "Pilih minimal satu akun Telegram yang valid.")
+        return await _blast_form_error(request, db, current_user, account_ids, usernames, message, "Pilih minimal satu akun Telegram yang valid.")
 
     cleaned = []
     seen = set()
@@ -419,11 +485,12 @@ async def send_blast(
         cleaned.append((display, key))
 
     if not cleaned:
-        return await _blast_form_error(request, db, account_ids, usernames, message, "Daftar username kosong atau tidak valid.")
+        return await _blast_form_error(request, db, current_user, account_ids, usernames, message, "Daftar username kosong atau tidak valid.")
     if len(cleaned) > MAX_RECIPIENTS_PER_JOB:
         return await _blast_form_error(
             request,
             db,
+            current_user,
             account_ids,
             usernames,
             message,
@@ -432,7 +499,7 @@ async def send_blast(
 
     message = message.strip()
     if not message:
-        return await _blast_form_error(request, db, account_ids, usernames, message, "Pesan tidak boleh kosong.")
+        return await _blast_form_error(request, db, current_user, account_ids, usernames, message, "Pesan tidak boleh kosong.")
 
     has_image = bool(image and image.filename)
     message_limit = 1024 if has_image else 4096
@@ -441,6 +508,7 @@ async def send_blast(
         return await _blast_form_error(
             request,
             db,
+            current_user,
             account_ids,
             usernames,
             message,
@@ -451,8 +519,10 @@ async def send_blast(
     if has_image:
         suffix = Path(image.filename).suffix.lower() or ".jpg"
         if suffix not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
-            return await _blast_form_error(request, db, account_ids, usernames, message, "Format gambar harus JPG, PNG, GIF, atau WebP.")
-        upload_path = UPLOAD_DIR / f"{uuid.uuid4().hex}{suffix}"
+            return await _blast_form_error(request, db, current_user, account_ids, usernames, message, "Format gambar harus JPG, PNG, GIF, atau WebP.")
+        user_upload_dir = UPLOAD_DIR / str(current_user.id)
+        user_upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_path = user_upload_dir / f"{uuid.uuid4().hex}{suffix}"
         uploaded_bytes = 0
         try:
             with upload_path.open("xb") as output:
@@ -466,6 +536,7 @@ async def send_blast(
             return await _blast_form_error(
                 request,
                 db,
+                current_user,
                 account_ids,
                 usernames,
                 message,
@@ -488,6 +559,7 @@ async def send_blast(
         _delay_min = min(MAX_DELAY_SECONDS, max(SAFE_DELAY_SECONDS, _delay_min))
         _delay_max = min(MAX_DELAY_SECONDS, max(_delay_min, _delay_max))
         job = BlastJob(
+            user_id=current_user.id,
             status="queued",
             message=message,
             image_path=image_path,
@@ -508,6 +580,7 @@ async def send_blast(
                 .join(BlastJob, BlastJob.id == BlastRecipient.job_id)
                 .filter(
                     BlastRecipient.normalized_username == normalized,
+                    BlastJob.user_id == current_user.id,
                     BlastRecipient.status.in_(["pending", "sending"]),
                     BlastJob.status.in_(["queued", "running"]),
                 )
@@ -533,9 +606,14 @@ async def send_blast(
     return RedirectResponse(url=f"/blast?job_id={job.id}", status_code=303)
 
 
-async def _blast_form_error(request, db, selected_ids, usernames, message, error_message):
-    accounts = db.query(TelegramAccount).filter(TelegramAccount.is_active == 1).order_by(TelegramAccount.created_at).all()
-    recent_jobs = db.query(BlastJob).order_by(BlastJob.created_at.desc()).limit(10).all()
+async def _blast_form_error(request, db, current_user, selected_ids, usernames, message, error_message):
+    accounts = db.query(TelegramAccount).filter(
+        TelegramAccount.user_id == current_user.id,
+        TelegramAccount.is_active == 1,
+    ).order_by(TelegramAccount.created_at).all()
+    recent_jobs = db.query(BlastJob).filter(
+        BlastJob.user_id == current_user.id
+    ).order_by(BlastJob.created_at.desc()).limit(10).all()
     return _render(request, "blast.html", {
         "accounts": accounts,
         "selected_ids": set(selected_ids),
@@ -550,8 +628,15 @@ async def _blast_form_error(request, db, selected_ids, usernames, message, error
 
 
 @router.get("/api/jobs/{job_id}")
-def job_status(job_id: int, db: Session = Depends(get_db)):
-    job = db.get(BlastJob, job_id)
+def job_status(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    job = db.query(BlastJob).filter(
+        BlastJob.id == job_id,
+        BlastJob.user_id == current_user.id,
+    ).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job tidak ditemukan")
 

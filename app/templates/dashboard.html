@@ -1,12 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — MAMI GROUP{% endblock %}
+{% block title %}Beranda — PorsLabs Telegram Blaster{% endblock %}
 {% block content %}
-<div class="flex-between" style="margin-bottom:20px;">
+<div class="flex-between page-head">
   <div>
-    <h2 style="font-size:1.45rem;">Dashboard Pengiriman</h2>
-    <p class="muted small" style="margin-top:5px;">Setiap akun memiliki antrean sendiri; job dari beberapa tab tidak lagi mengganti akun secara global.</p>
+    <span class="eyebrow">Workspace {{ current_user.name or current_user.email }}</span>
+    <h1>Dashboard <span class="gradient-text">Pengiriman</span></h1>
+    <p>Semua akun, antrean, scraper, dan riwayat di halaman ini hanya dimiliki oleh workspace Anda.</p>
   </div>
-  <a href="/connect-telegram" class="btn btn-primary">Tambah Akun</a>
+  <a href="/connect-telegram" class="btn btn-primary">＋ Tambah Akun</a>
 </div>
 
 {% if error == 'account_busy' %}
@@ -15,7 +16,7 @@
 
 <div class="card">
   <div class="flex-between" style="margin-bottom:14px;">
-    <div class="card-title" style="margin:0;">Total berhasil terkirim</div>
+    <div class="card-title" style="margin:0;">Ringkasan pesan terkirim</div>
     <span class="badge {% if running_jobs %}badge-orange{% else %}badge-green{% endif %}">{{ running_jobs }} job aktif</span>
   </div>
   <div class="stats-grid">
@@ -31,7 +32,7 @@
 <!-- ─── AKUN TERHUBUNG ─────────────────────────────────────────────────── -->
 <div class="card">
   <div class="flex-between" style="margin-bottom:14px;">
-    <div class="card-title" style="margin:0;">Akun Telegram Terhubung</div>
+    <div class="card-title" style="margin:0;">Akun Terhubung</div>
     <div id="accounts-controls" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
   </div>
   {% if accounts %}
@@ -48,7 +49,8 @@
             <div class="flex" style="justify-content:flex-end;">
               <a href="/blast?account_id={{ acc.id }}" class="btn btn-outline" style="padding:7px 12px;font-size:.8rem;">Pakai</a>
               <form method="post" action="/delete-account/{{ acc.id }}" style="margin:0;" onsubmit="return confirm('Hapus akun {{ acc.phone }}? Session akan dihapus permanen.')">
-                <button class="btn btn-danger" style="padding:7px 12px;font-size:.8rem;">🗑</button>
+                <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
+                <button class="btn btn-danger" style="padding:7px 12px;font-size:.8rem;" aria-label="Hapus akun">Hapus</button>
               </form>
             </div>
           </td>
@@ -58,7 +60,7 @@
     </table>
   </div>
   {% else %}
-  <div class="alert alert-warn">Belum ada akun. <a class="inline-link" href="/connect-telegram">Hubungkan akun Telegram</a> terlebih dahulu.</div>
+  <div class="alert alert-warn">Belum ada akun. <a class="inline-link" href="/connect-telegram">Hubungkan akun</a> terlebih dahulu.</div>
   {% endif %}
 </div>
 

@@ -1,8 +1,9 @@
 # Telegram Blaster
 
-FastAPI control panel for consent-based Telegram messaging, Telegram contact
-exports, and WhatsApp account utilities. The application intentionally runs as
-one Uvicorn worker because its per-account queues and locks live in-process.
+PorsLabs FastAPI control panel for consent-based Telegram messaging and
+Telegram contact exports. Each Google user owns an isolated set of Telegram
+accounts, blast jobs, uploads, and scraper jobs. The application intentionally
+runs as one Uvicorn worker because its per-account queues and locks live in-process.
 
 ## Railway
 
@@ -15,17 +16,23 @@ Attach a Railway volume at `/data`. The app automatically detects
 that volume. `BLASTER_DB_PATH` and `BLASTER_UPLOAD_DIR` can override those
 locations when needed.
 
-Recommended variables:
+Google sign-in variables:
 
 ```text
-APP_USERNAME=admin
-APP_PASSWORD=<strong-random-password>
+GOOGLE_CLIENT_ID=<google-oauth-web-client-id>
+GOOGLE_CLIENT_SECRET=<google-oauth-web-client-secret>
+SESSION_SECRET=<strong-random-secret>
+GOOGLE_REDIRECT_URI=https://your-domain.example/auth/google/callback
+BOOTSTRAP_OWNER_EMAIL=owner@example.com
+# Optional, comma-separated invite-only access:
+GOOGLE_ALLOWED_EMAILS=owner@example.com,team@example.com
 MAX_RECIPIENTS_PER_JOB=200
 ```
 
-`APP_PASSWORD` enables HTTP Basic authentication for every control-panel route;
-`/health` remains available to Railway. Never commit Telegram, WhatsApp, or
-Railway credentials to this repository.
+`APP_PASSWORD` remains a temporary Basic Auth fallback only while Google OAuth
+is not configured. Existing Telegram data is assigned to `BOOTSTRAP_OWNER_EMAIL`
+on the first migration. `/health` remains public for Railway. Never commit
+Google, Telegram, or Railway credentials to this repository.
 
 ## Local run
 
@@ -33,6 +40,5 @@ Railway credentials to this repository.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cd wa_service && npm ci && cd ..
 uvicorn main:app --host 127.0.0.1 --port 8080 --workers 1
 ```

@@ -6,8 +6,9 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
+from app.auth import get_current_user
 from app.database import get_db
-from app.models import BlastJob, BlastRecipient, TelegramAccount
+from app.models import BlastJob, BlastRecipient, TelegramAccount, User
 
 router = APIRouter()
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -15,9 +16,24 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 
 @router.get("/dashboard")
-def dashboard(request: Request, db: Session = Depends(get_db)):
-    accounts = db.query(TelegramAccount).order_by(TelegramAccount.created_at.desc()).all()
-    recent_jobs = db.query(BlastJob).order_by(BlastJob.created_at.desc()).limit(12).all()
+def dashboard(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    accounts = (
+        db.query(TelegramAccount)
+        .filter(TelegramAccount.user_id == current_user.id)
+        .order_by(TelegramAccount.created_at.desc())
+        .all()
+    )
+    recent_jobs = (
+        db.query(BlastJob)
+        .filter(BlastJob.user_id == current_user.id)
+        .order_by(BlastJob.created_at.desc())
+        .limit(12)
+        .all()
+    )
 
     now = datetime.utcnow()
     ranges = [
@@ -37,6 +53,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             for cutoff in cutoffs
         ]
     ).filter(
+        BlastRecipient.job_id == BlastJob.id,
+        BlastJob.user_id == current_user.id,
         BlastRecipient.status == "sent",
         BlastRecipient.sent_at >= cutoffs[-1],
     ).one()
@@ -47,13 +65,17 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     running_jobs = (
         db.query(func.count(BlastJob.id))
-        .filter(BlastJob.status.in_(["queued", "running"]))
+        .filter(
+            BlastJob.user_id == current_user.id,
+            BlastJob.status.in_(["queued", "running"]),
+        )
         .scalar()
         or 0
     )
 
     return templates.TemplateResponse(request, "dashboard.html", {
         "request": request,
+        "current_user": current_user,
         "accounts": accounts,
         "recent_jobs": recent_jobs,
         "history_counts": history_counts,
