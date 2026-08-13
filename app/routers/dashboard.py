@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -30,18 +30,20 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         ("7 hari", timedelta(days=7)),
         ("1 bulan", timedelta(days=30)),
     ]
-    history_counts = []
-    for label, delta in ranges:
-        count = (
-            db.query(func.count(BlastRecipient.id))
-            .filter(
-                BlastRecipient.status == "sent",
-                BlastRecipient.sent_at >= now - delta,
-            )
-            .scalar()
-            or 0
-        )
-        history_counts.append({"label": label, "count": count})
+    cutoffs = [now - delta for _, delta in ranges]
+    counts = db.query(
+        *[
+            func.sum(case((BlastRecipient.sent_at >= cutoff, 1), else_=0))
+            for cutoff in cutoffs
+        ]
+    ).filter(
+        BlastRecipient.status == "sent",
+        BlastRecipient.sent_at >= cutoffs[-1],
+    ).one()
+    history_counts = [
+        {"label": label, "count": int(counts[index] or 0)}
+        for index, (label, _) in enumerate(ranges)
+    ]
 
     running_jobs = (
         db.query(func.count(BlastJob.id))
@@ -50,7 +52,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         or 0
     )
 
-    return templates.TemplateResponse("dashboard.html", {
+    return templates.TemplateResponse(request, "dashboard.html", {
         "request": request,
         "accounts": accounts,
         "recent_jobs": recent_jobs,

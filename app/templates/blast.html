@@ -62,13 +62,13 @@
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
         <div style="flex:1;min-width:140px;">
           <label style="font-size:.78rem;color:var(--muted);margin-bottom:5px;">Minimum (detik)</label>
-          <input type="number" name="delay_min" id="delay_min" min="0.1" step="0.1" value="5"
+          <input type="number" name="delay_min" id="delay_min" min="5" max="3600" step="0.1" value="5"
                  style="padding:9px 12px;" oninput="syncDelayMax()">
         </div>
         <div style="padding-top:18px;color:var(--muted);">—</div>
         <div style="flex:1;min-width:140px;">
           <label style="font-size:.78rem;color:var(--muted);margin-bottom:5px;">Maksimum (detik)</label>
-          <input type="number" name="delay_max" id="delay_max" min="0.1" step="0.1" value="5"
+          <input type="number" name="delay_max" id="delay_max" min="5" max="3600" step="0.1" value="5"
                  style="padding:9px 12px;">
         </div>
         <div style="padding-top:18px;">

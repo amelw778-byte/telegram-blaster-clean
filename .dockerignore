@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+__pycache__
+**/__pycache__
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+.env
+node_modules
+**/node_modules
+uploads/*
+!uploads/README.txt
+app/uploads/*
+!app/uploads/README.txt

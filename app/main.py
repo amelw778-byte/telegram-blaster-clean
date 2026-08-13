@@ -1,4 +1,8 @@
 from pathlib import Path
+import base64
+import binascii
+import hmac
+import os
 import sys
 import types
 
@@ -13,7 +17,7 @@ if __package__ in (None, ""):
 
 
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from sqlalchemy import text
@@ -39,6 +43,36 @@ with engine.connect() as _conn:
 app = FastAPI(title="Telegram Blaster - miawjugabisa.com")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+APP_USERNAME = os.getenv("APP_USERNAME", "admin")
+APP_PASSWORD = os.getenv("APP_PASSWORD")
+
+
+@app.middleware("http")
+async def optional_basic_auth(request, call_next):
+    """Protect the control panel when APP_PASSWORD is configured in Railway."""
+    if not APP_PASSWORD or request.url.path == "/health":
+        return await call_next(request)
+
+    authorization = request.headers.get("authorization", "")
+    try:
+        scheme, encoded = authorization.split(" ", 1)
+        decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
+        username, password = decoded.split(":", 1)
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        scheme = username = password = ""
+
+    if (
+        scheme.casefold() != "basic"
+        or not hmac.compare_digest(username, APP_USERNAME)
+        or not hmac.compare_digest(password, APP_PASSWORD)
+    ):
+        return JSONResponse(
+            {"detail": "Authentication required"},
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Telegram Blaster"'},
+        )
+    return await call_next(request)
+
 from app.routers import dashboard, telegram, scraper, wa
 
 app.include_router(dashboard.router)
@@ -61,3 +95,11 @@ async def resume_jobs_after_restart():
 @app.get("/")
 def root_redirect():
     return RedirectResponse(url="/dashboard")
+
+
+@app.get("/health", include_in_schema=False)
+def healthcheck():
+    """Readiness probe used by Railway before switching live traffic."""
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
+    return {"status": "ok"}

@@ -25,11 +25,23 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 # ─── In-memory job store (reset saat Railway restart, itu normal) ───────────
 _jobs: dict[str, dict] = {}
 _bg_tasks: set = set()   # cegah GC pada asyncio.create_task
+MAX_IN_MEMORY_JOBS = 20
 
 
 def _render(request, template, ctx):
     ctx["request"] = request
-    return templates.TemplateResponse(template, ctx)
+    return templates.TemplateResponse(request, template, ctx)
+
+
+def _prune_finished_jobs() -> None:
+    """Bound retained contact sets so a long-lived worker cannot grow forever."""
+    if len(_jobs) < MAX_IN_MEMORY_JOBS:
+        return
+    for old_job_id, old_job in list(_jobs.items()):
+        if old_job.get("status") != "running":
+            _jobs.pop(old_job_id, None)
+            if len(_jobs) < MAX_IN_MEMORY_JOBS:
+                break
 
 
 # ─── GET /scraper ────────────────────────────────────────────────────────────
@@ -69,6 +81,7 @@ async def scraper_start(
             "error_message": "Akun tidak valid atau session kosong.",
         })
 
+    _prune_finished_jobs()
     job_id = uuid.uuid4().hex
     _jobs[job_id] = {
         "status": "running",
@@ -100,9 +113,13 @@ async def scraper_start(
 # ─── Background scraping logic ───────────────────────────────────────────────
 async def _do_scrape(job_id: str, session_str: str, api_id: int, api_hash: str, label: str):
     job = _jobs[job_id]
+    client = None
     try:
         client = TelegramClient(StringSession(session_str), api_id, api_hash)
         await client.connect()
+
+        if not await client.is_user_authorized():
+            raise RuntimeError("Session Telegram sudah tidak valid; hubungkan ulang akun")
 
         job["log"].append(f"✅ Login sebagai {label}")
 
@@ -117,7 +134,9 @@ async def _do_scrape(job_id: str, session_str: str, api_id: int, api_hash: str, 
                 groups.append(d)
 
         job["log"].append(f"📂 {len(groups)} group ditemukan")
-        all_contacts: set[str] = set()
+        # Mutate the retained set directly. Copying the whole set for every
+        # participant made large scrapes increasingly slow and memory-heavy.
+        all_contacts: set[str] = job["contacts"]
 
         for dialog in groups:
             name = dialog.name or "Tanpa Nama"
@@ -137,8 +156,6 @@ async def _do_scrape(job_id: str, session_str: str, api_id: int, api_hash: str, 
                         all_contacts.add(phone)
                         count += 1
 
-                    # Update live setiap tambah kontak
-                    job["contacts"] = all_contacts.copy()
                     job["total"] = len(all_contacts)
 
             except FloodWaitError as e:
@@ -151,13 +168,15 @@ async def _do_scrape(job_id: str, session_str: str, api_id: int, api_hash: str, 
 
             job["log"].append(f"   └─ ✅ {count} kontak | total unik: {len(all_contacts)}")
 
-        await client.disconnect()
         job["status"] = "done"
         job["log"].append(f"🎉 Selesai! {len(all_contacts)} kontak unik terkumpul.")
 
     except Exception as e:
         job["status"] = "error"
         job["log"].append(f"❌ Error: {str(e)}")
+    finally:
+        if client and client.is_connected():
+            await client.disconnect()
 
 
 # ─── GET /api/scraper/{job_id}  (polling dari frontend) ─────────────────────

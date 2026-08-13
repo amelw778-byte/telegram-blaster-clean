@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import uuid
@@ -9,12 +10,13 @@ from typing import List
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import joinedload
 from sqlalchemy.orm import Session
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from telethon.sessions import StringSession
 
-from app.database import get_db
+from app.database import DB_PATH, get_db
 from app.models import BlastJob, BlastRecipient, TelegramAccount
 from app.services.blast_manager import blast_manager
 
@@ -23,14 +25,18 @@ APP_DIR = Path(__file__).resolve().parents[1]
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 SAFE_DELAY_SECONDS = 5
+MAX_DELAY_SECONDS = 3600
 MAX_RECIPIENTS_PER_JOB = int(os.getenv("MAX_RECIPIENTS_PER_JOB", "200"))
-UPLOAD_DIR = APP_DIR / "uploads"
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+UPLOAD_DIR = Path(
+    os.getenv("BLASTER_UPLOAD_DIR", str(DB_PATH.parent / "uploads"))
+).expanduser().resolve()
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _render(request, template, ctx):
     ctx["request"] = request
-    return templates.TemplateResponse(template, ctx)
+    return templates.TemplateResponse(request, template, ctx)
 
 
 def _back_dashboard():
@@ -308,7 +314,7 @@ def stop_job(job_id: int, db: Session = Depends(get_db)):
         )
         job.status = "paused"
         job.completed_at = datetime.utcnow()
-        db.commit()
+        blast_manager._refresh_counts(db, job_id)
     return RedirectResponse(url=f"/blast?job_id={job_id}", status_code=303)
 
 
@@ -355,6 +361,7 @@ async def blast_page(
     if job:
         recipients = (
             db.query(BlastRecipient)
+            .options(joinedload(BlastRecipient.account))
             .filter(BlastRecipient.job_id == job.id)
             .order_by(BlastRecipient.sort_order)
             .all()
@@ -423,27 +430,68 @@ async def send_blast(
             f"Maksimal {MAX_RECIPIENTS_PER_JOB} username per job agar status dan antrean tetap stabil.",
         )
 
+    message = message.strip()
+    if not message:
+        return await _blast_form_error(request, db, account_ids, usernames, message, "Pesan tidak boleh kosong.")
+
+    has_image = bool(image and image.filename)
+    message_limit = 1024 if has_image else 4096
+    if len(message) > message_limit:
+        kind = "caption gambar" if has_image else "pesan"
+        return await _blast_form_error(
+            request,
+            db,
+            account_ids,
+            usernames,
+            message,
+            f"Panjang {kind} maksimal {message_limit} karakter.",
+        )
+
     image_path = None
-    if image and image.filename:
+    if has_image:
         suffix = Path(image.filename).suffix.lower() or ".jpg"
         if suffix not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
             return await _blast_form_error(request, db, account_ids, usernames, message, "Format gambar harus JPG, PNG, GIF, atau WebP.")
-        image_path = str(UPLOAD_DIR / f"{uuid.uuid4().hex}{suffix}")
-        content = await image.read()
-        if len(content) > 10 * 1024 * 1024:
-            return await _blast_form_error(request, db, account_ids, usernames, message, "Ukuran gambar maksimal 10 MB.")
-        Path(image_path).write_bytes(content)
+        upload_path = UPLOAD_DIR / f"{uuid.uuid4().hex}{suffix}"
+        uploaded_bytes = 0
+        try:
+            with upload_path.open("xb") as output:
+                while chunk := await image.read(1024 * 1024):
+                    uploaded_bytes += len(chunk)
+                    if uploaded_bytes > MAX_UPLOAD_BYTES:
+                        raise ValueError("upload_too_large")
+                    output.write(chunk)
+        except ValueError:
+            upload_path.unlink(missing_ok=True)
+            return await _blast_form_error(
+                request,
+                db,
+                account_ids,
+                usernames,
+                message,
+                f"Ukuran gambar maksimal {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+            )
+        except Exception:
+            upload_path.unlink(missing_ok=True)
+            raise
+        finally:
+            await image.close()
+        image_path = str(upload_path)
 
     # Lock pembuatan job mencegah dua request pada proses yang sama memasukkan
     # target identik sebagai pending secara bersamaan.
     async with blast_manager.enqueue_lock:
-        _delay_min = max(0.5, float(delay_min or 5))
-        _delay_max = max(_delay_min, float(delay_max or _delay_min))
+        _delay_min = float(delay_min or SAFE_DELAY_SECONDS)
+        _delay_max = float(delay_max or _delay_min)
+        if not math.isfinite(_delay_min) or not math.isfinite(_delay_max):
+            _delay_min = _delay_max = float(SAFE_DELAY_SECONDS)
+        _delay_min = min(MAX_DELAY_SECONDS, max(SAFE_DELAY_SECONDS, _delay_min))
+        _delay_max = min(MAX_DELAY_SECONDS, max(_delay_min, _delay_max))
         job = BlastJob(
             status="queued",
             message=message,
             image_path=image_path,
-            delay_seconds=int(_delay_min),
+            delay_seconds=_delay_min,
             delay_max_seconds=_delay_max,
             accounts_json=json.dumps([account.id for account in accounts]),
             consent_confirmed=True,
@@ -509,6 +557,7 @@ def job_status(job_id: int, db: Session = Depends(get_db)):
 
     recipients = (
         db.query(BlastRecipient)
+        .options(joinedload(BlastRecipient.account))
         .filter(BlastRecipient.job_id == job_id)
         .order_by(BlastRecipient.sort_order)
         .all()

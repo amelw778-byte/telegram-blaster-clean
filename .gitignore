@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+node_modules/
+uploads/*
+!uploads/README.txt
+app/uploads/*
+!app/uploads/README.txt

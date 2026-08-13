@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -16,16 +16,44 @@ from app.models.wa_account import WAAccount
 router    = APIRouter()
 APP_DIR   = Path(__file__).resolve().parents[1]
 WA_SVC    = Path(__file__).resolve().parents[2] / "wa_service"
-TMP_MOD   = Path("/tmp/wa_modules")
+NODE_MODULES = WA_SVC / "node_modules"
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 _jobs: dict[str, dict] = {}
 _bg:   set = set()
+MAX_IN_MEMORY_JOBS = 20
 
 
 def _render(req, tpl, ctx):
     ctx["request"] = req
-    return templates.TemplateResponse(tpl, ctx)
+    return templates.TemplateResponse(req, tpl, ctx)
+
+
+def _new_temp_json(prefix: str) -> str:
+    descriptor, path = tempfile.mkstemp(prefix=prefix, suffix=".json")
+    os.close(descriptor)
+    return path
+
+
+def _cleanup_job_files(job: dict) -> None:
+    for key in ("out_file", "sess_tmp", "job_tmp"):
+        path = job.get(key)
+        if path:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+
+
+def _prune_finished_jobs() -> None:
+    if len(_jobs) < MAX_IN_MEMORY_JOBS:
+        return
+    for old_job_id, old_job in list(_jobs.items()):
+        if old_job.get("status") in {"done", "error", "connected"}:
+            _cleanup_job_files(old_job)
+            _jobs.pop(old_job_id, None)
+            if len(_jobs) < MAX_IN_MEMORY_JOBS:
+                break
 
 
 # ─── GET /wa  (dashboard akun) ───────────────────────────────────────────────
@@ -44,8 +72,9 @@ def wa_connect_page(request: Request):
 # ─── POST /wa/connect/start  (mulai proses QR) ───────────────────────────────
 @router.post("/wa/connect/start", response_class=HTMLResponse)
 async def wa_connect_start(request: Request, label: str = Form("")):
+    _prune_finished_jobs()
     jid      = uuid.uuid4().hex
-    out_file = f"/tmp/wa_sess_{jid}.json"
+    out_file = _new_temp_json(f"wa_sess_{jid}_")
     _jobs[jid] = {
         "status": "connecting", "qr": None,
         "log": ["Memulai..."], "phone": None,
@@ -77,8 +106,8 @@ def wa_connect_save(jid: str, db: Session = Depends(get_db)):
     )
     db.add(acc)
     db.commit()
-    try: os.remove(job["out_file"])
-    except: pass
+    _cleanup_job_files(job)
+    _jobs.pop(jid, None)
     return RedirectResponse(url="/wa", status_code=303)
 
 
@@ -111,9 +140,10 @@ async def wa_groups_start(request: Request, db: Session = Depends(get_db)):
     if not acc:
         return JSONResponse({"error": "Akun tidak ditemukan"}, status_code=404)
 
+    _prune_finished_jobs()
     jid      = uuid.uuid4().hex
-    sess_tmp = f"/tmp/wa_s_{jid}.json"
-    job_tmp  = f"/tmp/wa_j_{jid}.json"
+    sess_tmp = _new_temp_json(f"wa_s_{jid}_")
+    job_tmp  = _new_temp_json(f"wa_j_{jid}_")
 
     with open(sess_tmp, "w") as f: f.write(acc.session_data)
     with open(job_tmp,  "w") as f: json.dump({"mode": "list_groups"}, f)
@@ -136,9 +166,10 @@ async def wa_add_start(request: Request, db: Session = Depends(get_db)):
     if not acc or not group_id or not numbers:
         return JSONResponse({"error": "Data tidak lengkap"}, status_code=400)
 
+    _prune_finished_jobs()
     jid      = uuid.uuid4().hex
-    sess_tmp = f"/tmp/wa_s_{jid}.json"
-    job_tmp  = f"/tmp/wa_j_{jid}.json"
+    sess_tmp = _new_temp_json(f"wa_s_{jid}_")
+    job_tmp  = _new_temp_json(f"wa_j_{jid}_")
 
     with open(sess_tmp, "w") as f: f.write(acc.session_data)
     with open(job_tmp,  "w") as f:
@@ -179,22 +210,24 @@ async def _run_connect(jid: str):
         job["status"] = "error"; job["log"].append("Node.js tidak ditemukan"); return
 
     await _ensure_modules(job)
-    if job["status"] == "error": return
+    if job["status"] == "error":
+        _cleanup_job_files(job)
+        return
 
     script = WA_SVC / "wa_connect.js"
     proc   = await asyncio.create_subprocess_exec(
         node, str(script), job["out_file"],
-        cwd=str(TMP_MOD),
+        cwd=str(WA_SVC),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "NODE_PATH": str(TMP_MOD / "node_modules")},
+        env={**os.environ, "NODE_PATH": str(NODE_MODULES)},
     )
 
     async def drain():
         async for raw in proc.stderr:
             l = raw.decode(errors="ignore").strip()
             if l and "Warning" not in l: job["log"].append(f"[node] {l[:200]}")
-    asyncio.create_task(drain())
+    drain_task = asyncio.create_task(drain())
 
     async for raw in proc.stdout:
         line = raw.decode(errors="ignore").strip()
@@ -208,7 +241,13 @@ async def _run_connect(jid: str):
             job["status"] = "connected"; job["phone"] = msg.get("phone")
             job["log"].append(f"Terhubung sebagai {msg.get('phone')}")
         elif t == "error":   job["status"] = "error"; job["log"].append(f"Error: {msg['message']}")
-    await proc.wait()
+    return_code = await proc.wait()
+    await drain_task
+    if return_code != 0 and job["status"] != "error":
+        job["status"] = "error"
+        job["log"].append(f"Proses Node berhenti dengan kode {return_code}")
+    if job["status"] == "error":
+        _cleanup_job_files(job)
 
 
 # ─── Background: jalankan wa_add.js ──────────────────────────────────────────
@@ -219,22 +258,24 @@ async def _run_add(jid: str):
         job["status"] = "error"; job["log"].append("Node.js tidak ditemukan"); return
 
     await _ensure_modules(job)
-    if job["status"] == "error": return
+    if job["status"] == "error":
+        _cleanup_job_files(job)
+        return
 
     script = WA_SVC / "wa_add.js"
     proc   = await asyncio.create_subprocess_exec(
         node, str(script), job["sess_tmp"], job["job_tmp"],
-        cwd=str(TMP_MOD),
+        cwd=str(WA_SVC),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "NODE_PATH": str(TMP_MOD / "node_modules")},
+        env={**os.environ, "NODE_PATH": str(NODE_MODULES)},
     )
 
     async def drain():
         async for raw in proc.stderr:
             l = raw.decode(errors="ignore").strip()
             if l and "Warning" not in l: job["log"].append(f"[node] {l[:200]}")
-    asyncio.create_task(drain())
+    drain_task = asyncio.create_task(drain())
 
     async for raw in proc.stdout:
         line = raw.decode(errors="ignore").strip()
@@ -252,34 +293,20 @@ async def _run_add(jid: str):
             job["log"].append(f"Selesai — {msg['added']} berhasil, {msg['failed']} gagal")
         elif t == "error":    job["status"] = "error"; job["log"].append(f"Error: {msg['message']}")
 
-    await proc.wait()
+    return_code = await proc.wait()
+    await drain_task
+    if return_code != 0 and job["status"] != "error":
+        job["status"] = "error"
+        job["log"].append(f"Proses Node berhenti dengan kode {return_code}")
     # Cleanup temp files
-    for k in ("sess_tmp", "job_tmp"):
-        try: os.remove(job.get(k, ""))
-        except: pass
+    _cleanup_job_files(job)
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 async def _ensure_modules(job: dict):
-    TMP_MOD.mkdir(parents=True, exist_ok=True)
-    pkg_dst = TMP_MOD / "package.json"
-    if not pkg_dst.exists():
-        shutil.copy(WA_SVC / "package.json", pkg_dst)
-
-    if not (TMP_MOD / "node_modules" / "@whiskeysockets").exists():
-        job["log"].append("Menginstall Baileys (~30 detik, hanya sekali)...")
-        p = await asyncio.create_subprocess_exec(
-            "npm", "install", "--omit=dev",
-            cwd=str(TMP_MOD),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, err = await p.communicate()
-        if p.returncode != 0:
-            job["status"] = "error"
-            job["log"].append(f"npm install gagal: {err.decode()[:200]}")
-            return
-        job["log"].append("Baileys siap.")
+    if not (NODE_MODULES / "@whiskeysockets" / "baileys").exists():
+        job["status"] = "error"
+        job["log"].append("Dependency WhatsApp belum tersedia. Jalankan npm ci di wa_service.")
 
 
 def _find_node():

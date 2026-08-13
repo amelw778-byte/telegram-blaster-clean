@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List
+from weakref import WeakValueDictionary
 
 from sqlalchemy import func
 from telethon import TelegramClient
@@ -18,12 +19,15 @@ from app.models import BlastJob, BlastRecipient, TelegramAccount
 TERMINAL_RECIPIENT_STATES = {"sent", "failed", "skipped", "paused"}
 ACTIVE_JOB_STATES = {"queued", "running"}
 MAX_CONSECUTIVE_FAILURES = 5  # Berhenti per-akun setelah gagal berturut-turut
+MIN_SEND_DELAY_SECONDS = 5.0
 
 
 class BlastManager:
     def __init__(self):
-        self.account_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.target_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        # Weak maps release locks after the last waiter finishes. A long-lived
+        # Railway process therefore does not retain every target ever seen.
+        self.account_locks: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+        self.target_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self.tasks: Dict[int, asyncio.Task] = {}
         self.enqueue_lock = asyncio.Lock()
         self._stop_flags: Dict[int, bool] = {}  # job_id → True berarti stop diminta
@@ -112,7 +116,6 @@ class BlastManager:
                         {BlastRecipient.status: "failed", BlastRecipient.error: f"Job error: {exc}"},
                         synchronize_session=False,
                     )
-                    db.commit()
                     self._refresh_counts(db, job_id)
         finally:
             self._stop_flags.pop(job_id, None)
@@ -121,7 +124,12 @@ class BlastManager:
     # ─── Per-account queue ───────────────────────────────────────────────────
 
     async def _run_account_queue(self, job_id: int, account_id: int, recipient_ids: Iterable[int]) -> None:
-        async with self.account_locks[account_id]:
+        account_lock = self.account_locks.get(account_id)
+        if account_lock is None:
+            account_lock = asyncio.Lock()
+            self.account_locks[account_id] = account_lock
+
+        async with account_lock:
             with SessionLocal() as db:
                 account = db.get(TelegramAccount, account_id)
                 job = db.get(BlastJob, job_id)
@@ -137,7 +145,7 @@ class BlastManager:
                 }
                 message = job.message
                 image_path = job.image_path
-                delay_min = max(0.5, float(job.delay_seconds or 5))
+                delay_min = max(MIN_SEND_DELAY_SECONDS, float(job.delay_seconds or MIN_SEND_DELAY_SECONDS))
                 # delay_max_seconds bisa None jika belum ada kolom (DB lama)
                 delay_max_raw = getattr(job, "delay_max_seconds", None)
                 delay_max = float(delay_max_raw) if delay_max_raw else delay_min
@@ -239,7 +247,12 @@ class BlastManager:
                 return "continue"
             target = recipient.normalized_username
 
-        async with self.target_locks[target]:
+        target_lock = self.target_locks.get(target)
+        if target_lock is None:
+            target_lock = asyncio.Lock()
+            self.target_locks[target] = target_lock
+
+        async with target_lock:
             with SessionLocal() as db:
                 recipient = db.get(BlastRecipient, recipient_id)
                 job = db.get(BlastJob, job_id)
@@ -261,7 +274,6 @@ class BlastManager:
                     recipient.status = "skipped"
                     recipient.error = "Dilewati: username sudah dikirim oleh job lain yang berjalan bersamaan"
                     recipient.updated_at = datetime.utcnow()
-                    db.commit()
                     self._refresh_counts(db, job_id)
                     return "continue"
 
@@ -269,7 +281,6 @@ class BlastManager:
                 recipient.error = None
                 recipient.updated_at = datetime.utcnow()
                 username = recipient.username
-                db.commit()
                 self._refresh_counts(db, job_id)
 
             try:
@@ -285,18 +296,16 @@ class BlastManager:
                         recipient.error = None
                         recipient.sent_at = datetime.utcnow()
                         recipient.updated_at = datetime.utcnow()
-                        db.commit()
                         self._refresh_counts(db, job_id)
                 return "continue"
 
             except FloodWaitError as exc:
                 secs = exc.seconds
-                self._mark_failed(recipient_id, job_id, f"FloodWait {secs}s — menunggu lalu lanjut")
-                await asyncio.sleep(secs)
-                return "failed"
+                self._mark_failed(recipient_id, job_id, f"FloodWait {secs}s — antrean akun dijeda")
+                return "floodwait"
             except PeerFloodError:
-                self._mark_failed(recipient_id, job_id, "PeerFlood — lanjut ke nomor berikutnya")
-                return "failed"
+                self._mark_failed(recipient_id, job_id, "PeerFlood — antrean akun dijeda")
+                return "peerflood"
             except Exception as exc:
                 # Gagal biasa — lanjut ke nomer berikutnya, hitung counter
                 self._mark_failed(recipient_id, job_id, str(exc))
@@ -311,7 +320,6 @@ class BlastManager:
                 recipient.status = "failed"
                 recipient.error = error[:1000]
                 recipient.updated_at = datetime.utcnow()
-                db.commit()
             self._refresh_counts(db, job_id)
 
     @staticmethod
@@ -330,7 +338,6 @@ class BlastManager:
             },
             synchronize_session=False,
         )
-        db.commit()
 
     @staticmethod
     def _fail_many(db, recipient_ids: Iterable[int], error: str, only_active: bool = False) -> None:
@@ -350,10 +357,12 @@ class BlastManager:
             },
             synchronize_session=False,
         )
-        db.commit()
 
     @staticmethod
-    def _refresh_counts(db, job_id: int) -> None:
+    def _refresh_counts(db, job_id: int, *, commit: bool = True) -> None:
+        # SessionLocal disables autoflush, so make pending recipient state
+        # changes visible to the aggregate query before counting.
+        db.flush()
         counts = dict(
             db.query(BlastRecipient.status, func.count(BlastRecipient.id))
             .filter(BlastRecipient.job_id == job_id)
@@ -362,17 +371,22 @@ class BlastManager:
         )
         job = db.get(BlastJob, job_id)
         if not job:
+            if commit:
+                db.commit()
             return
         job.sent_count = counts.get("sent", 0)
         job.failed_count = counts.get("failed", 0)
         job.skipped_count = counts.get("skipped", 0)
         job.pending_count = counts.get("pending", 0) + counts.get("sending", 0) + counts.get("paused", 0)
         job.total_count = sum(counts.values())
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
 
     def _finalize_job(self, job_id: int) -> None:
         with SessionLocal() as db:
-            self._refresh_counts(db, job_id)
+            self._refresh_counts(db, job_id, commit=False)
             job = db.get(BlastJob, job_id)
             if not job:
                 return
