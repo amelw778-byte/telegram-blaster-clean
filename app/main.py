@@ -21,12 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from sqlalchemy import text
 
-from app.auth import (
-    GOOGLE_AUTH_CONFIGURED,
-    LEGACY_BASIC_ENABLED,
-    AuthenticationRequired,
-    session_secret_for_middleware,
-)
+from app.auth import AuthenticationRequired, session_secret_for_middleware
 from app.database import SessionLocal, engine
 from app.migrations import initialize_database
 from app.models import BlastJob, BlastRecipient, TelegramAccount, User  # noqa: F401
@@ -52,12 +47,6 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.exception_handler(AuthenticationRequired)
 async def authentication_required(request: Request, _exc: AuthenticationRequired):
-    if LEGACY_BASIC_ENABLED and not GOOGLE_AUTH_CONFIGURED:
-        return JSONResponse(
-            {"detail": "Authentication required"},
-            status_code=401,
-            headers={"WWW-Authenticate": 'Basic realm="PorsLabs Telegram Blaster"'},
-        )
     if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
         next_path = quote(request.url.path, safe="/")
         return RedirectResponse(f"/login?next={next_path}", status_code=303)
@@ -85,7 +74,7 @@ async def resume_jobs_after_restart():
 
 @app.get("/")
 def root_redirect(request: Request):
-    destination = "/dashboard" if request.session.get("user_id") or LEGACY_BASIC_ENABLED else "/login"
+    destination = "/dashboard" if request.session.get("user_id") else "/login"
     return RedirectResponse(url=destination)
 
 

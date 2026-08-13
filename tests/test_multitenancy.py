@@ -159,6 +159,20 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
         self.assertTrue(response.headers["location"].startswith("/login"))
 
+    def test_basic_auth_is_not_accepted(self):
+        client = TestClient(app, follow_redirects=False)
+        credentials = base64.b64encode(b"admin:removed").decode("ascii")
+        response = client.get(
+            "/dashboard",
+            headers={
+                "Accept": "text/html",
+                "Authorization": f"Basic {credentials}",
+            },
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertTrue(response.headers["location"].startswith("/login"))
+        self.assertNotIn("www-authenticate", response.headers)
+
 
 if __name__ == "__main__":
     unittest.main()

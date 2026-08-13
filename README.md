@@ -29,10 +29,9 @@ GOOGLE_ALLOWED_EMAILS=owner@example.com,team@example.com
 MAX_RECIPIENTS_PER_JOB=200
 ```
 
-`APP_PASSWORD` remains a temporary Basic Auth fallback only while Google OAuth
-is not configured. Existing Telegram data is assigned to `BOOTSTRAP_OWNER_EMAIL`
-on the first migration. `/health` remains public for Railway. Never commit
-Google, Telegram, or Railway credentials to this repository.
+Existing Telegram data is assigned to `BOOTSTRAP_OWNER_EMAIL` on the first
+migration. `/health` remains public for Railway. Never commit Google, Telegram,
+or Railway credentials to this repository.
 
 ## Local run
 

@@ -1,6 +1,3 @@
-import base64
-import binascii
-import hmac
 import os
 import secrets
 from datetime import datetime
@@ -22,13 +19,7 @@ GOOGLE_ALLOWED_EMAILS = {
     if item.strip()
 }
 
-APP_USERNAME = os.getenv("APP_USERNAME", "admin")
-APP_PASSWORD = os.getenv("APP_PASSWORD")
 GOOGLE_AUTH_CONFIGURED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and SESSION_SECRET)
-LEGACY_BASIC_ENABLED = bool(APP_PASSWORD) and (
-    os.getenv("ALLOW_LEGACY_BASIC_AUTH", "").strip().casefold() in {"1", "true", "yes"}
-    or not GOOGLE_AUTH_CONFIGURED
-)
 
 oauth = OAuth()
 if GOOGLE_AUTH_CONFIGURED:
@@ -50,38 +41,8 @@ class AuthenticationRequired(HTTPException):
 
 
 def session_secret_for_middleware() -> str:
-    # APP_PASSWORD keeps legacy deployments stable until SESSION_SECRET is set.
     # The random fallback is local-only and intentionally invalidates cookies on restart.
-    return SESSION_SECRET or APP_PASSWORD or secrets.token_urlsafe(32)
-
-
-def _basic_credentials(request: Request) -> tuple[str, str] | None:
-    authorization = request.headers.get("authorization", "")
-    try:
-        scheme, encoded = authorization.split(" ", 1)
-        decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
-        username, password = decoded.split(":", 1)
-    except (ValueError, UnicodeDecodeError, binascii.Error):
-        return None
-    if scheme.casefold() != "basic":
-        return None
-    return username, password
-
-
-def _legacy_user(request: Request, db: Session) -> User | None:
-    if not LEGACY_BASIC_ENABLED or not APP_PASSWORD:
-        return None
-    credentials = _basic_credentials(request)
-    if not credentials:
-        return None
-    username, password = credentials
-    if not (
-        hmac.compare_digest(username, APP_USERNAME)
-        and hmac.compare_digest(password, APP_PASSWORD)
-    ):
-        return None
-    email = os.getenv("BOOTSTRAP_OWNER_EMAIL", "amelw778@gmail.com").strip().casefold()
-    return db.query(User).filter(User.email == email, User.is_active.is_(True)).first()
+    return SESSION_SECRET or secrets.token_urlsafe(32)
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
@@ -93,9 +54,6 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
             request.session.clear()
 
     if not user:
-        user = _legacy_user(request, db)
-
-    if not user:
         raise AuthenticationRequired()
 
     request.state.current_user = user
@@ -105,7 +63,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
 
 def verify_csrf(request: Request, csrf_token: str = Form(...)) -> None:
     expected = request.session.get("csrf_token", "")
-    if not expected or not hmac.compare_digest(expected, csrf_token):
+    if not expected or not secrets.compare_digest(expected, csrf_token):
         raise HTTPException(status_code=403, detail="Form keamanan kedaluwarsa. Muat ulang halaman.")
 
 
