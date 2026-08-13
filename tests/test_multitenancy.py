@@ -117,6 +117,13 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertNotIn("Other Secret Account", response.text)
         self.assertNotIn("other secret job", response.text)
 
+    def test_header_does_not_render_profile_summary(self):
+        response = self.client.get("/dashboard")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('class="user-area"', response.text)
+        self.assertNotIn('class="user-chip"', response.text)
+        self.assertNotIn('action="/logout"', response.text)
+
     def test_other_users_job_is_not_addressable(self):
         response = self.client.get(f"/api/jobs/{self.other_job_id}")
         self.assertEqual(response.status_code, 404)

@@ -15,7 +15,6 @@
   {% block extra_head %}{% endblock %}
 </head>
 <body>
-{% set viewer = request.state.current_user %}
 {% set path = request.url.path %}
 <div class="ambient ambient-one"></div>
 <div class="ambient ambient-two"></div>
@@ -34,22 +33,6 @@
       <a class="nav-link {% if path.startswith('/connect-telegram') or path in ['/verify-otp', '/verify-2fa', '/resend-otp'] %}active{% endif %}" href="/connect-telegram">Akun</a>
     </nav>
 
-    <div class="user-area">
-      <div class="user-chip" title="{{ viewer.email }}">
-        <span class="avatar">
-          {% if viewer.picture_url %}<img src="{{ viewer.picture_url }}" alt="">{% else %}{{ (viewer.name or viewer.email)[0]|upper }}{% endif %}
-        </span>
-        <span class="user-copy">
-          <span class="user-name">{{ viewer.name or 'Pengguna' }}</span>
-          <span class="user-email">{{ viewer.email }}</span>
-        </span>
-      </div>
-      <form class="logout-form" method="post" action="/logout">
-        <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
-        <button class="icon-button" type="submit" title="Keluar" aria-label="Keluar">↗</button>
-      </form>
-    </div>
-
     <button class="menu-toggle" id="menu-toggle" type="button" aria-label="Buka menu" aria-controls="mobile-drawer" aria-expanded="false">
       <span></span><span></span><span></span>
     </button>
@@ -63,13 +46,6 @@
     <a class="nav-link {% if path.startswith('/scraper') %}active{% endif %}" href="/scraper">Scraper</a>
     <a class="nav-link {% if path.startswith('/connect-telegram') %}active{% endif %}" href="/connect-telegram">Akun</a>
   </nav>
-  <div class="mobile-user">
-    <div class="user-chip">
-      <span class="avatar">{% if viewer.picture_url %}<img src="{{ viewer.picture_url }}" alt="">{% else %}{{ (viewer.name or viewer.email)[0]|upper }}{% endif %}</span>
-      <span class="user-copy"><span class="user-name">{{ viewer.name or 'Pengguna' }}</span><span class="user-email">{{ viewer.email }}</span></span>
-    </div>
-    <form class="logout-form" method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}"><button class="icon-button" type="submit" aria-label="Keluar">↗</button></form>
-  </div>
 </aside>
 
 <main class="main">{% block content %}{% endblock %}</main>
