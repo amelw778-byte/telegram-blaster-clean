@@ -173,6 +173,14 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertTrue(response.headers["location"].startswith("/login"))
         self.assertNotIn("www-authenticate", response.headers)
 
+    def test_login_uses_scheme_independent_static_assets(self):
+        client = TestClient(app)
+        response = client.get("/login")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('href="/static/css/porslabs-app.css"', response.text)
+        self.assertIn('src="/static/js/porslabs-app.js"', response.text)
+        self.assertNotIn("http://testserver/static/", response.text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://res.cloudinary.com">
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', path='css/porslabs-app.css') }}">
+  <link rel="stylesheet" href="/static/css/porslabs-app.css">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -81,7 +81,7 @@
   </div>
 </footer>
 
-<script src="{{ url_for('static', path='js/porslabs-app.js') }}" defer></script>
+<script src="/static/js/porslabs-app.js" defer></script>
 {% block extra_js %}{% endblock %}
 </body>
 </html>
