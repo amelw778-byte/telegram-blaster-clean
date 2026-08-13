@@ -17,6 +17,31 @@ def initialize_database() -> None:
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
 
+    if "users" in table_names:
+        user_columns = {column["name"] for column in inspector.get_columns("users")}
+        with engine.begin() as connection:
+            if "username" not in user_columns:
+                connection.execute(text("ALTER TABLE users ADD COLUMN username VARCHAR(32)"))
+            if "password_hash" not in user_columns:
+                connection.execute(text("ALTER TABLE users ADD COLUMN password_hash TEXT"))
+            if "password_reset_token_hash" not in user_columns:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN password_reset_token_hash VARCHAR(64)")
+                )
+            if "password_reset_expires_at" not in user_columns:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN password_reset_expires_at DATETIME")
+                )
+            connection.execute(
+                text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)")
+            )
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_password_reset_token_hash "
+                    "ON users (password_reset_token_hash)"
+                )
+            )
+
     with SessionLocal() as db:
         email = _bootstrap_email()
         owner = db.query(User).filter(User.email == email).first()

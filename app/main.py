@@ -38,7 +38,7 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=session_secret_for_middleware(),
     session_cookie="porslabs_session",
-    max_age=60 * 60 * 24 * 7,
+    max_age=60 * 60 * 24 * 30,
     same_site="lax",
     https_only=bool(os.getenv("RAILWAY_ENVIRONMENT")),
 )

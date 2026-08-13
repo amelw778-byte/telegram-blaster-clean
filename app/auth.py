@@ -1,5 +1,11 @@
+import hashlib
 import os
+import re
 import secrets
+import smtplib
+import ssl
+import time
+from email.message import EmailMessage
 from datetime import datetime
 
 from authlib.integrations.starlette_client import OAuth
@@ -20,6 +26,13 @@ GOOGLE_ALLOWED_EMAILS = {
 }
 
 GOOGLE_AUTH_CONFIGURED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and SESSION_SECRET)
+USERNAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$")
+PASSWORD_SCRYPT_N = 2**14
+PASSWORD_SCRYPT_R = 8
+PASSWORD_SCRYPT_P = 1
+PASSWORD_SCRYPT_LENGTH = 32
+SESSION_SHORT_SECONDS = 60 * 60 * 12
+SESSION_REMEMBERED_SECONDS = 60 * 60 * 24 * 30
 
 oauth = OAuth()
 if GOOGLE_AUTH_CONFIGURED:
@@ -45,9 +58,124 @@ def session_secret_for_middleware() -> str:
     return SESSION_SECRET or secrets.token_urlsafe(32)
 
 
+def csrf_token_for(request: Request) -> str:
+    return request.session.setdefault("csrf_token", secrets.token_urlsafe(32))
+
+
+def start_user_session(request: Request, user_id: int, remember: bool = False) -> None:
+    request.session.clear()
+    request.session.update({
+        "user_id": user_id,
+        "csrf_token": secrets.token_urlsafe(32),
+        "expires_at": int(time.time()) + (
+            SESSION_REMEMBERED_SECONDS if remember else SESSION_SHORT_SECONDS
+        ),
+    })
+
+
+def normalize_username(value: str) -> str:
+    return value.strip().casefold()
+
+
+def validate_username(value: str) -> str | None:
+    username = normalize_username(value)
+    if not USERNAME_PATTERN.fullmatch(username):
+        return "Username harus 3–32 karakter dan hanya memakai huruf, angka, titik, garis bawah, atau tanda minus."
+    return None
+
+
+def validate_password(value: str) -> str | None:
+    if len(value) < 8:
+        return "Password minimal 8 karakter."
+    if len(value) > 128:
+        return "Password maksimal 128 karakter."
+    return None
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    derived = hashlib.scrypt(
+        password.encode("utf-8"),
+        salt=salt,
+        n=PASSWORD_SCRYPT_N,
+        r=PASSWORD_SCRYPT_R,
+        p=PASSWORD_SCRYPT_P,
+        dklen=PASSWORD_SCRYPT_LENGTH,
+    )
+    return "$".join((
+        "scrypt",
+        str(PASSWORD_SCRYPT_N),
+        str(PASSWORD_SCRYPT_R),
+        str(PASSWORD_SCRYPT_P),
+        salt.hex(),
+        derived.hex(),
+    ))
+
+
+def verify_password(password: str, encoded: str | None) -> bool:
+    if not encoded:
+        return False
+    try:
+        algorithm, n, r, p, salt_hex, expected_hex = encoded.split("$", 5)
+        if algorithm != "scrypt":
+            return False
+        expected = bytes.fromhex(expected_hex)
+        derived = hashlib.scrypt(
+            password.encode("utf-8"),
+            salt=bytes.fromhex(salt_hex),
+            n=int(n),
+            r=int(r),
+            p=int(p),
+            dklen=len(expected),
+        )
+    except (ValueError, TypeError):
+        return False
+    return secrets.compare_digest(derived, expected)
+
+
+# Menyamakan biaya komputasi login untuk username yang ada dan tidak ada.
+DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
+
+
+def password_recovery_configured() -> bool:
+    return bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM_EMAIL", "").strip())
+
+
+def send_password_reset_email(recipient: str, reset_url: str) -> None:
+    host = os.getenv("SMTP_HOST", "").strip()
+    sender = os.getenv("SMTP_FROM_EMAIL", "").strip()
+    if not host or not sender:
+        raise RuntimeError("SMTP belum dikonfigurasi")
+
+    port = int(os.getenv("SMTP_PORT", "587"))
+    username = os.getenv("SMTP_USERNAME", "").strip()
+    password = os.getenv("SMTP_PASSWORD", "")
+    use_tls = os.getenv("SMTP_USE_TLS", "true").strip().casefold() in {"1", "true", "yes"}
+    message = EmailMessage()
+    message["Subject"] = "Atur ulang password PorsLabs Telegram Blaster"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        "Kami menerima permintaan untuk mengatur ulang password akun Anda.\n\n"
+        f"Buka tautan ini dalam 30 menit:\n{reset_url}\n\n"
+        "Jika Anda tidak meminta perubahan ini, abaikan email ini."
+    )
+
+    with smtplib.SMTP(host, port, timeout=12) as smtp:
+        if use_tls:
+            smtp.starttls(context=ssl.create_default_context())
+        if username:
+            smtp.login(username, password)
+        smtp.send_message(message)
+
+
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = None
     user_id = request.session.get("user_id")
+    expires_at = request.session.get("expires_at")
+    if user_id and (not isinstance(expires_at, (int, float)) or expires_at <= time.time()):
+        request.session.clear()
+        user_id = None
     if user_id:
         user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
         if not user:
@@ -57,7 +185,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
         raise AuthenticationRequired()
 
     request.state.current_user = user
-    request.session.setdefault("csrf_token", secrets.token_urlsafe(32))
+    csrf_token_for(request)
     return user
 
 
@@ -78,7 +206,7 @@ def upsert_google_user(db: Session, userinfo: dict) -> User:
     user = db.query(User).filter(User.google_sub == google_sub).first()
     if not user:
         bootstrap_user = db.query(User).filter(User.email == email).first()
-        if bootstrap_user and bootstrap_user.google_sub.startswith("bootstrap:"):
+        if bootstrap_user and bootstrap_user.google_sub.startswith(("bootstrap:", "local:")):
             user = bootstrap_user
             user.google_sub = google_sub
         elif bootstrap_user:

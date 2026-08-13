@@ -27,11 +27,24 @@ BOOTSTRAP_OWNER_EMAIL=owner@example.com
 # Optional, comma-separated invite-only access:
 GOOGLE_ALLOWED_EMAILS=owner@example.com,team@example.com
 MAX_RECIPIENTS_PER_JOB=200
+# Optional, untuk fitur Lupa Password
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=mailer@example.com
+SMTP_PASSWORD=change-me
+SMTP_FROM_EMAIL=mailer@example.com
+SMTP_USE_TLS=true
+APP_BASE_URL=https://your-app.example.com
 ```
 
 Existing Telegram data is assigned to `BOOTSTRAP_OWNER_EMAIL` on the first
 migration. `/health` remains public for Railway. Never commit Google, Telegram,
 or Railway credentials to this repository.
+
+Pengguna dapat mendaftar dan masuk menggunakan username/password. Password
+disimpan sebagai hash scrypt dengan salt unik. Google OAuth tetap tersedia
+sebagai opsi ketika kredensialnya dikonfigurasi. Fitur pemulihan password hanya
+aktif setelah konfigurasi SMTP diisi.
 
 ## Local run
 

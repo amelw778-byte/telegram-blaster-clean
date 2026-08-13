@@ -26,6 +26,18 @@ document.addEventListener('keydown', (event) => {
 const year = document.getElementById('copyright-year');
 if (year) year.textContent = new Date().getFullYear();
 
+document.querySelectorAll('[data-password-toggle]').forEach((button) => {
+  const input = document.getElementById(button.dataset.passwordToggle);
+  if (!input) return;
+  button.addEventListener('click', () => {
+    const showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    button.classList.toggle('active', !showing);
+    button.setAttribute('aria-label', showing ? 'Tampilkan password' : 'Sembunyikan password');
+    input.focus({ preventScroll: true });
+  });
+});
+
 function previewImage(input) {
   const area = input.closest('.upload-area');
   const preview = area?.querySelector('.upload-preview');

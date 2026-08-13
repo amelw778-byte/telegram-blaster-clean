@@ -1,8 +1,12 @@
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
+import time
 import unittest
+from datetime import datetime, timedelta
 
 from itsdangerous import TimestampSigner
 
@@ -19,7 +23,7 @@ os.environ.pop("GOOGLE_CLIENT_SECRET", None)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.auth import upsert_google_user  # noqa: E402
+from app.auth import hash_password, upsert_google_user, verify_password  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import BlastJob, TelegramAccount, User  # noqa: E402
@@ -28,9 +32,20 @@ from app.routers import scraper  # noqa: E402
 
 def _session_cookie(user_id: int) -> str:
     payload = base64.b64encode(
-        json.dumps({"user_id": user_id, "csrf_token": TEST_CSRF}).encode("utf-8")
+        json.dumps({
+            "user_id": user_id,
+            "csrf_token": TEST_CSRF,
+            "expires_at": int(time.time()) + 3600,
+        }).encode("utf-8")
     )
     return TimestampSigner(os.environ["SESSION_SECRET"]).sign(payload).decode("utf-8")
+
+
+def _csrf_from(html: str) -> str:
+    match = re.search(r'name="csrf_token" value="([^"]+)"', html)
+    if not match:
+        raise AssertionError("CSRF token not found")
+    return match.group(1)
 
 
 class TenantIsolationTests(unittest.TestCase):
@@ -180,6 +195,117 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertIn('href="/static/css/porslabs-app.css"', response.text)
         self.assertIn('src="/static/js/porslabs-app.js"', response.text)
         self.assertNotIn("http://testserver/static/", response.text)
+
+    def test_local_registration_and_password_login(self):
+        client = TestClient(app, follow_redirects=False)
+        register_page = client.get("/register")
+        response = client.post(
+            "/register",
+            data={
+                "csrf_token": _csrf_from(register_page.text),
+                "username": "new.member",
+                "email": "local-member@example.com",
+                "password": "SafePassword123!",
+                "password_confirmation": "SafePassword123!",
+            },
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/dashboard")
+
+        with SessionLocal() as db:
+            user = db.query(User).filter(User.username == "new.member").one()
+            self.assertNotIn("SafePassword123!", user.password_hash)
+            self.assertTrue(verify_password("SafePassword123!", user.password_hash))
+            self.assertTrue(user.google_sub.startswith("local:"))
+
+        second_client = TestClient(app, follow_redirects=False)
+        login_page = second_client.get("/login")
+        login = second_client.post(
+            "/login",
+            data={
+                "csrf_token": _csrf_from(login_page.text),
+                "identity": "new.member",
+                "password": "SafePassword123!",
+                "remember_me": "1",
+                "next_path": "/dashboard",
+            },
+        )
+        self.assertEqual(login.status_code, 303)
+        self.assertEqual(login.headers["location"], "/dashboard")
+        dashboard = second_client.get("/dashboard")
+        self.assertEqual(dashboard.status_code, 200)
+
+    def test_wrong_local_password_is_rejected(self):
+        with SessionLocal() as db:
+            user = User(
+                google_sub="local:wrong-password-test",
+                username="wrongpass",
+                email="wrong-password@example.com",
+                password_hash=hash_password("CorrectPassword123!"),
+                name="Wrong Password Test",
+            )
+            db.add(user)
+            db.commit()
+
+        client = TestClient(app, follow_redirects=False)
+        login_page = client.get("/login")
+        response = client.post(
+            "/login",
+            data={
+                "csrf_token": _csrf_from(login_page.text),
+                "identity": "wrongpass",
+                "password": "not-the-password",
+                "next_path": "/dashboard",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Username atau password tidak sesuai", response.text)
+
+    def test_password_reset_token_is_single_use(self):
+        token = "single-use-password-reset-token"
+        with SessionLocal() as db:
+            user = User(
+                google_sub="local:password-reset-test",
+                username="resetmember",
+                email="reset-member@example.com",
+                password_hash=hash_password("OldPassword123!"),
+                password_reset_token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                password_reset_expires_at=datetime.utcnow() + timedelta(minutes=30),
+                name="Reset Member",
+            )
+            db.add(user)
+            db.commit()
+            user_id = user.id
+
+        client = TestClient(app, follow_redirects=False)
+        reset_page = client.get(f"/reset-password?token={token}")
+        self.assertEqual(reset_page.status_code, 200)
+        response = client.post(
+            "/reset-password",
+            data={
+                "csrf_token": _csrf_from(reset_page.text),
+                "token": token,
+                "password": "NewPassword123!",
+                "password_confirmation": "NewPassword123!",
+            },
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/login?notice=password_reset")
+
+        with SessionLocal() as db:
+            user = db.get(User, user_id)
+            self.assertTrue(verify_password("NewPassword123!", user.password_hash))
+            self.assertIsNone(user.password_reset_token_hash)
+
+        reused = client.get(f"/reset-password?token={token}")
+        self.assertIn("tidak valid atau sudah kedaluwarsa", reused.text)
+
+    def test_forgot_password_is_honest_when_email_is_not_configured(self):
+        client = TestClient(app)
+        response = client.get("/forgot-password")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Layanan email pemulihan belum diaktifkan", response.text)
+        self.assertIn("disabled", response.text)
 
 
 if __name__ == "__main__":

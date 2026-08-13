@@ -81,6 +81,15 @@ class LegacyMigrationTests(unittest.TestCase):
                 row[1] for row in connection.execute("PRAGMA table_info(blast_jobs)").fetchall()
             }
             self.assertIn("delay_max_seconds", blast_columns)
+            user_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(users)").fetchall()
+            }
+            self.assertTrue({
+                "username",
+                "password_hash",
+                "password_reset_token_hash",
+                "password_reset_expires_at",
+            }.issubset(user_columns))
 
 
 if __name__ == "__main__":
