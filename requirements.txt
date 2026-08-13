@@ -7,3 +7,5 @@ telethon==1.36.0
 authlib==1.7.2
 httpx==0.28.1
 itsdangerous==2.2.0
+cryptography==46.0.5
+psycopg[binary]==3.3.2

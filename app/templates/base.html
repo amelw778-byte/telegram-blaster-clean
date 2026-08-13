@@ -31,6 +31,7 @@
       <a class="nav-link {% if path == '/blast' %}active{% endif %}" href="/blast">Blast</a>
       <a class="nav-link {% if path.startswith('/scraper') or path.startswith('/api/scraper') %}active{% endif %}" href="/scraper">Scraper</a>
       <a class="nav-link {% if path.startswith('/connect-telegram') or path in ['/verify-otp', '/verify-2fa', '/resend-otp'] %}active{% endif %}" href="/connect-telegram">Akun</a>
+      <a class="nav-link {% if path.startswith('/security') %}active{% endif %}" href="/security/sessions">Keamanan</a>
     </nav>
 
     <button class="menu-toggle" id="menu-toggle" type="button" aria-label="Buka menu" aria-controls="mobile-drawer" aria-expanded="false">
@@ -45,6 +46,7 @@
     <a class="nav-link {% if path == '/blast' %}active{% endif %}" href="/blast">Blast</a>
     <a class="nav-link {% if path.startswith('/scraper') %}active{% endif %}" href="/scraper">Scraper</a>
     <a class="nav-link {% if path.startswith('/connect-telegram') %}active{% endif %}" href="/connect-telegram">Akun</a>
+    <a class="nav-link {% if path.startswith('/security') %}active{% endif %}" href="/security/sessions">Keamanan</a>
   </nav>
 </aside>
 

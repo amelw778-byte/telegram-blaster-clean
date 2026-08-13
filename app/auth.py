@@ -6,14 +6,14 @@ import smtplib
 import ssl
 import time
 from email.message import EmailMessage
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from authlib.integrations.starlette_client import OAuth
 from fastapi import Depends, Form, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User
+from app.models import DeviceSession, User
 
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
@@ -62,15 +62,87 @@ def csrf_token_for(request: Request) -> str:
     return request.session.setdefault("csrf_token", secrets.token_urlsafe(32))
 
 
-def start_user_session(request: Request, user_id: int, remember: bool = False) -> None:
+def _device_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _device_name(user_agent: str) -> str:
+    lowered = user_agent.casefold()
+    browser = next(
+        (name for marker, name in (
+            ("edg/", "Microsoft Edge"),
+            ("opr/", "Opera"),
+            ("firefox/", "Firefox"),
+            ("chrome/", "Chrome"),
+            ("safari/", "Safari"),
+        ) if marker in lowered),
+        "Browser",
+    )
+    system = next(
+        (name for marker, name in (
+            ("android", "Android"),
+            ("iphone", "iPhone"),
+            ("ipad", "iPad"),
+            ("windows", "Windows"),
+            ("mac os", "macOS"),
+            ("linux", "Linux"),
+        ) if marker in lowered),
+        "Perangkat tidak dikenal",
+    )
+    return f"{browser} · {system}"
+
+
+def _client_ip(request: Request) -> str | None:
+    forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+    value = forwarded or (request.client.host if request.client else "")
+    return value[:64] or None
+
+
+def start_user_session(
+    db: Session,
+    request: Request,
+    user_id: int,
+    remember: bool = False,
+) -> DeviceSession:
+    now = datetime.utcnow()
+    lifetime = SESSION_REMEMBERED_SECONDS if remember else SESSION_SHORT_SECONDS
+    expires_at = now + timedelta(seconds=lifetime)
+    token = secrets.token_urlsafe(32)
+    user_agent = request.headers.get("user-agent", "")[:500]
+    device = DeviceSession(
+        user_id=user_id,
+        token_hash=_device_token_hash(token),
+        device_name=_device_name(user_agent),
+        user_agent=user_agent or None,
+        ip_address=_client_ip(request),
+        created_at=now,
+        last_seen_at=now,
+        expires_at=expires_at,
+    )
+    db.add(device)
+    db.commit()
+    db.refresh(device)
     request.session.clear()
     request.session.update({
         "user_id": user_id,
+        "device_token": token,
         "csrf_token": secrets.token_urlsafe(32),
-        "expires_at": int(time.time()) + (
-            SESSION_REMEMBERED_SECONDS if remember else SESSION_SHORT_SECONDS
-        ),
+        "expires_at": int(expires_at.timestamp()),
     })
+    request.state.device_session = device
+    return device
+
+
+def revoke_current_session(db: Session, request: Request) -> None:
+    token = request.session.get("device_token", "")
+    if token:
+        device = db.query(DeviceSession).filter(
+            DeviceSession.token_hash == _device_token_hash(token),
+            DeviceSession.revoked_at.is_(None),
+        ).first()
+        if device:
+            device.revoked_at = datetime.utcnow()
+            db.commit()
 
 
 def normalize_username(value: str) -> str:
@@ -184,7 +256,34 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     if not user:
         raise AuthenticationRequired()
 
+    token = request.session.get("device_token", "")
+    device = None
+    if token:
+        device = db.query(DeviceSession).filter(
+            DeviceSession.token_hash == _device_token_hash(token),
+            DeviceSession.user_id == user.id,
+            DeviceSession.revoked_at.is_(None),
+            DeviceSession.expires_at > datetime.utcnow(),
+        ).first()
+        if not device:
+            request.session.clear()
+            raise AuthenticationRequired()
+    else:
+        # Daftarkan cookie valid dari deployment sebelum manajemen perangkat tersedia.
+        device = start_user_session(
+            db,
+            request,
+            user.id,
+            remember=(expires_at - time.time()) > SESSION_SHORT_SECONDS,
+        )
+
+    if device.last_seen_at < datetime.utcnow() - timedelta(minutes=5):
+        device.last_seen_at = datetime.utcnow()
+        device.ip_address = _client_ip(request)
+        db.commit()
+
     request.state.current_user = user
+    request.state.device_session = device
     csrf_token_for(request)
     return user
 

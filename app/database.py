@@ -4,32 +4,48 @@ from pathlib import Path
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-def _resolve_db_path() -> Path:
+
+def _data_directory() -> Path:
+    volume_path = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    return Path(volume_path).expanduser().resolve() if volume_path else Path.cwd().resolve()
+
+
+def _resolve_sqlite_path() -> Path:
     explicit_path = os.getenv("BLASTER_DB_PATH")
     if explicit_path:
         return Path(explicit_path).expanduser().resolve()
 
-    # Railway exposes this automatically when a volume is attached. Keeping
-    # the SQLite database inside that mount makes sessions and job history
-    # survive deploys without requiring a second environment variable.
-    volume_path = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
-    base_dir = Path(volume_path) if volume_path else Path.cwd()
-    return (base_dir / "blaster.db").expanduser().resolve()
+    return _data_directory() / "blaster.db"
 
 
-DB_PATH = _resolve_db_path()
+DB_PATH = _resolve_sqlite_path()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgres://"):]
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgresql://"):]
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False, "timeout": 30},
-    pool_pre_ping=True,
-)
+SQLALCHEMY_DATABASE_URL = DATABASE_URL or f"sqlite:///{DB_PATH}"
+IS_SQLITE = SQLALCHEMY_DATABASE_URL.startswith("sqlite:")
+
+engine_options = {"pool_pre_ping": True}
+if IS_SQLITE:
+    engine_options["connect_args"] = {"check_same_thread": False, "timeout": 30}
+else:
+    engine_options.update({
+        "pool_size": int(os.getenv("DB_POOL_SIZE", "5")),
+        "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "5")),
+        "pool_recycle": 300,
+    })
+
+engine = create_engine(SQLALCHEMY_DATABASE_URL, **engine_options)
 
 
 @event.listens_for(engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, _connection_record):
+    if not IS_SQLITE:
+        return
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")

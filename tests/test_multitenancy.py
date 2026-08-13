@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import time
 import unittest
 from datetime import datetime, timedelta
@@ -16,6 +17,7 @@ TEST_CSRF = "test-csrf-token"
 TEST_DB.unlink(missing_ok=True)
 os.environ["BLASTER_DB_PATH"] = str(TEST_DB)
 os.environ["SESSION_SECRET"] = "test-session-secret-for-porslabs"
+os.environ["DATA_ENCRYPTION_KEY"] = "test-data-encryption-key-for-porslabs"
 os.environ["BOOTSTRAP_OWNER_EMAIL"] = "owner@example.com"
 os.environ.pop("APP_PASSWORD", None)
 os.environ.pop("GOOGLE_CLIENT_ID", None)
@@ -26,7 +28,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.auth import hash_password, upsert_google_user, verify_password  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import BlastJob, TelegramAccount, User  # noqa: E402
+from app.models import BlastJob, DeviceSession, TelegramAccount, User  # noqa: E402
+from app.security import ENCRYPTED_PREFIX, decrypt_sensitive, encrypt_sensitive  # noqa: E402
 from app.routers import scraper  # noqa: E402
 
 
@@ -124,14 +127,48 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertNotIn('class="user-chip"', response.text)
         self.assertNotIn('action="/logout"', response.text)
 
+    def test_telegram_secrets_are_encrypted_at_rest(self):
+        with SessionLocal() as db:
+            account = db.get(TelegramAccount, self.owner_account_id)
+            self.assertEqual(account.session_str, "owner-session")
+            self.assertEqual(account.api_hash, "owner-hash")
+        with sqlite3.connect(TEST_DB) as connection:
+            session_str, api_hash = connection.execute(
+                "SELECT session_str, api_hash FROM telegram_accounts WHERE id = ?",
+                (self.owner_account_id,),
+            ).fetchone()
+        self.assertTrue(session_str.startswith(ENCRYPTED_PREFIX))
+        self.assertTrue(api_hash.startswith(ENCRYPTED_PREFIX))
+        self.assertNotIn("owner-session", session_str)
+        self.assertNotIn("owner-hash", api_hash)
+
+    def test_encryption_key_can_be_rotated(self):
+        original_key = os.environ["DATA_ENCRYPTION_KEY"]
+        original_old = os.environ.get("DATA_ENCRYPTION_KEY_OLD")
+        try:
+            os.environ["DATA_ENCRYPTION_KEY"] = "old-key"
+            old_ciphertext = encrypt_sensitive("rotation-secret")
+            os.environ["DATA_ENCRYPTION_KEY"] = "new-key"
+            os.environ["DATA_ENCRYPTION_KEY_OLD"] = "old-key"
+            rotated = encrypt_sensitive(old_ciphertext)
+            self.assertNotEqual(rotated, old_ciphertext)
+            self.assertEqual(decrypt_sensitive(rotated), "rotation-secret")
+        finally:
+            os.environ["DATA_ENCRYPTION_KEY"] = original_key
+            if original_old is None:
+                os.environ.pop("DATA_ENCRYPTION_KEY_OLD", None)
+            else:
+                os.environ["DATA_ENCRYPTION_KEY_OLD"] = original_old
+
     def test_other_users_job_is_not_addressable(self):
         response = self.client.get(f"/api/jobs/{self.other_job_id}")
         self.assertEqual(response.status_code, 404)
 
     def test_other_users_account_cannot_be_deleted(self):
+        dashboard = self.client.get("/dashboard")
         response = self.client.post(
             f"/delete-account/{self.other_account_id}",
-            data={"csrf_token": TEST_CSRF},
+            data={"csrf_token": _csrf_from(dashboard.text)},
         )
         self.assertEqual(response.status_code, 404)
         with SessionLocal() as db:
@@ -313,6 +350,52 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Layanan email pemulihan belum diaktifkan", response.text)
         self.assertIn("disabled", response.text)
+
+    def test_device_session_can_revoke_other_session(self):
+        client = TestClient(app, follow_redirects=False)
+        login_page = client.get("/login")
+        with SessionLocal() as db:
+            user = User(
+                google_sub="local:device-session-test",
+                username="devicemember",
+                email="device-member@example.com",
+                password_hash=hash_password("DevicePassword123!"),
+                name="Device Member",
+            )
+            db.add(user)
+            db.commit()
+            user_id = user.id
+        login = client.post(
+            "/login",
+            data={
+                "csrf_token": _csrf_from(login_page.text),
+                "identity": "devicemember",
+                "password": "DevicePassword123!",
+                "next_path": "/dashboard",
+            },
+        )
+        self.assertEqual(login.status_code, 303)
+        security_page = client.get("/security/sessions")
+        self.assertEqual(security_page.status_code, 200)
+        self.assertIn("Perangkat ini", security_page.text)
+
+        with SessionLocal() as db:
+            extra = DeviceSession(
+                user_id=user_id,
+                token_hash="f" * 64,
+                device_name="Firefox · Linux",
+                expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            db.add(extra)
+            db.commit()
+            extra_id = extra.id
+        response = client.post(
+            f"/security/sessions/{extra_id}/revoke",
+            data={"csrf_token": _csrf_from(security_page.text)},
+        )
+        self.assertEqual(response.status_code, 303)
+        with SessionLocal() as db:
+            self.assertIsNotNone(db.get(DeviceSession, extra_id).revoked_at)
 
 
 if __name__ == "__main__":

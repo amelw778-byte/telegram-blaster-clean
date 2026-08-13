@@ -24,7 +24,7 @@ from sqlalchemy import text
 from app.auth import AuthenticationRequired, session_secret_for_middleware
 from app.database import SessionLocal, engine
 from app.migrations import initialize_database
-from app.models import BlastJob, BlastRecipient, TelegramAccount, User  # noqa: F401
+from app.models import BlastJob, BlastRecipient, DeviceSession, TelegramAccount, User  # noqa: F401
 from app.services.blast_manager import blast_manager
 
 APP_DIR = Path(__file__).resolve().parent
@@ -53,12 +53,13 @@ async def authentication_required(request: Request, _exc: AuthenticationRequired
     return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
 
-from app.routers import auth, dashboard, scraper, telegram
+from app.routers import auth, dashboard, scraper, security, telegram
 
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(telegram.router)
 app.include_router(scraper.router)
+app.include_router(security.router)
 
 
 @app.on_event("startup")

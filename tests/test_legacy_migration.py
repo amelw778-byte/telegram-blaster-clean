@@ -56,6 +56,7 @@ class LegacyMigrationTests(unittest.TestCase):
             "BLASTER_DB_PATH": str(db_path),
             "BOOTSTRAP_OWNER_EMAIL": "legacy-owner@example.com",
             "SESSION_SECRET": "legacy-migration-session-secret",
+            "DATA_ENCRYPTION_KEY": "legacy-migration-encryption-key",
         })
         command = [sys.executable, "-c", "from app.main import app; print(app.title)"]
         for _ in range(2):

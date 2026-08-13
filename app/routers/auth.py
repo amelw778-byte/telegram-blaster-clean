@@ -24,6 +24,7 @@ from app.auth import (
     normalize_username,
     oauth,
     password_recovery_configured,
+    revoke_current_session,
     send_password_reset_email,
     start_user_session,
     upsert_google_user,
@@ -33,7 +34,7 @@ from app.auth import (
     verify_csrf,
 )
 from app.database import get_db
-from app.models import User
+from app.models import DeviceSession, User
 
 
 router = APIRouter()
@@ -124,7 +125,7 @@ def password_login(
 
     user.last_login_at = datetime.utcnow()
     db.commit()
-    start_user_session(request, user.id, remember=bool(remember_me))
+    start_user_session(db, request, user.id, remember=bool(remember_me))
     return RedirectResponse(_safe_next(next_path), status_code=303)
 
 
@@ -193,7 +194,7 @@ def register_account(
             values=values,
         )
     db.refresh(user)
-    start_user_session(request, user.id)
+    start_user_session(db, request, user.id)
     return RedirectResponse("/dashboard", status_code=303)
 
 
@@ -306,6 +307,10 @@ def reset_password(
     user.password_hash = hash_password(password)
     user.password_reset_token_hash = None
     user.password_reset_expires_at = None
+    db.query(DeviceSession).filter(
+        DeviceSession.user_id == user.id,
+        DeviceSession.revoked_at.is_(None),
+    ).update({DeviceSession.revoked_at: datetime.utcnow()}, synchronize_session=False)
     db.commit()
     request.session.clear()
     return RedirectResponse("/login?notice=password_reset", status_code=303)
@@ -336,7 +341,7 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login?error=google_login_failed", status_code=303)
 
     destination = _safe_next(request.session.get("post_login_next"))
-    start_user_session(request, user.id, remember=True)
+    start_user_session(db, request, user.id, remember=True)
     return RedirectResponse(destination, status_code=303)
 
 
@@ -345,6 +350,8 @@ def logout(
     request: Request,
     _user: User = Depends(get_current_user),
     _csrf: None = Depends(verify_csrf),
+    db: Session = Depends(get_db),
 ):
+    revoke_current_session(db, request)
     request.session.clear()
     return RedirectResponse("/login", status_code=303)

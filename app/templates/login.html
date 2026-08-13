@@ -29,6 +29,8 @@
     {% if error == 'oauth_not_configured' %}<div class="auth-alert auth-alert-error" role="alert">Login Google belum dikonfigurasi.</div>{% endif %}
     {% if error == 'google_login_failed' %}<div class="auth-alert auth-alert-error" role="alert">Login Google gagal atau dibatalkan.</div>{% endif %}
     {% if notice == 'password_reset' %}<div class="auth-alert auth-alert-success" role="status">Password berhasil diperbarui. Silakan masuk.</div>{% endif %}
+    {% if notice == 'session_revoked' %}<div class="auth-alert auth-alert-success" role="status">Sesi perangkat berhasil dikeluarkan.</div>{% endif %}
+    {% if notice == 'all_sessions_revoked' %}<div class="auth-alert auth-alert-success" role="status">Semua sesi berhasil dikeluarkan. Silakan masuk kembali.</div>{% endif %}
 
     <form class="auth-form" method="post" action="/login">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

@@ -11,10 +11,11 @@ The repository includes a multi-stage Docker build and a `/health` readiness
 endpoint. `railway.json` configures Railway to wait for that endpoint before
 switching traffic to a new deployment.
 
-Attach a Railway volume at `/data`. The app automatically detects
-`RAILWAY_VOLUME_MOUNT_PATH` and stores `blaster.db` plus queued image uploads on
-that volume. `BLASTER_DB_PATH` and `BLASTER_UPLOAD_DIR` can override those
-locations when needed.
+Production uses PostgreSQL through `DATABASE_URL`. During the first PostgreSQL
+boot, an existing `/data/blaster.db` is copied transactionally and retained as
+a recovery archive. The Railway volume at `/data` remains attached for queued
+image uploads and the legacy archive. Local development falls back to SQLite
+when `DATABASE_URL` is absent.
 
 Google sign-in variables:
 
@@ -35,6 +36,10 @@ SMTP_PASSWORD=change-me
 SMTP_FROM_EMAIL=mailer@example.com
 SMTP_USE_TLS=true
 APP_BASE_URL=https://your-app.example.com
+DATABASE_URL=postgresql://...
+DATA_ENCRYPTION_KEY=<strong-random-secret>
+# Only while rotating keys; remove after all encrypted rows have been rewritten:
+DATA_ENCRYPTION_KEY_OLD=<previous-key>
 ```
 
 Existing Telegram data is assigned to `BOOTSTRAP_OWNER_EMAIL` on the first
@@ -45,6 +50,12 @@ Pengguna dapat mendaftar dan masuk menggunakan username/password. Password
 disimpan sebagai hash scrypt dengan salt unik. Google OAuth tetap tersedia
 sebagai opsi ketika kredensialnya dikonfigurasi. Fitur pemulihan password hanya
 aktif setelah konfigurasi SMTP diisi.
+
+`session_str` dan `api_hash` Telegram dienkripsi menggunakan Fernet sebelum
+masuk database. Sesi web dicatat di tabel `device_sessions`, sehingga pengguna
+dapat mencabut akses per browser melalui halaman **Keamanan**. PostgreSQL
+production dilindungi oleh Railway PITR dan jadwal backup harian, mingguan,
+serta bulanan. Prosedur operasional ada di `OPERATIONS.md`.
 
 ## Local run
 
