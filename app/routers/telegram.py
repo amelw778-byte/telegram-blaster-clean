@@ -25,7 +25,7 @@ router = APIRouter()
 APP_DIR = Path(__file__).resolve().parents[1]
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
-SAFE_DELAY_SECONDS = 5
+MIN_DELAY_SECONDS = 0.0
 MAX_DELAY_SECONDS = 3600
 MAX_RECIPIENTS_PER_JOB = int(os.getenv("MAX_RECIPIENTS_PER_JOB", "200"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
@@ -54,6 +54,20 @@ def _normalize_username(raw: str) -> tuple[str, str] | None:
     if not value:
         return None
     return value, value.casefold()
+
+
+def _normalize_delay_range(delay_min: float, delay_max: float) -> tuple[float, float]:
+    """Accept zero delay while keeping malformed and negative values bounded."""
+    try:
+        normalized_min = float(delay_min)
+        normalized_max = float(delay_max)
+    except (TypeError, ValueError):
+        return MIN_DELAY_SECONDS, MIN_DELAY_SECONDS
+    if not math.isfinite(normalized_min) or not math.isfinite(normalized_max):
+        return MIN_DELAY_SECONDS, MIN_DELAY_SECONDS
+    normalized_min = min(MAX_DELAY_SECONDS, max(MIN_DELAY_SECONDS, normalized_min))
+    normalized_max = min(MAX_DELAY_SECONDS, max(normalized_min, normalized_max))
+    return normalized_min, normalized_max
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -449,8 +463,8 @@ async def send_blast(
     usernames: str = Form(...),
     message: str = Form(...),
     consent_confirmed: bool = Form(False),
-    delay_min: float = Form(5.0),
-    delay_max: float = Form(5.0),
+    delay_min: float = Form(0.0),
+    delay_max: float = Form(0.0),
     image: UploadFile | None = File(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -552,12 +566,7 @@ async def send_blast(
     # Lock pembuatan job mencegah dua request pada proses yang sama memasukkan
     # target identik sebagai pending secara bersamaan.
     async with blast_manager.enqueue_lock:
-        _delay_min = float(delay_min or SAFE_DELAY_SECONDS)
-        _delay_max = float(delay_max or _delay_min)
-        if not math.isfinite(_delay_min) or not math.isfinite(_delay_max):
-            _delay_min = _delay_max = float(SAFE_DELAY_SECONDS)
-        _delay_min = min(MAX_DELAY_SECONDS, max(SAFE_DELAY_SECONDS, _delay_min))
-        _delay_max = min(MAX_DELAY_SECONDS, max(_delay_min, _delay_max))
+        _delay_min, _delay_max = _normalize_delay_range(delay_min, delay_max)
         job = BlastJob(
             user_id=current_user.id,
             status="queued",

@@ -31,6 +31,7 @@ from app.main import app  # noqa: E402
 from app.models import BlastJob, DeviceSession, TelegramAccount, User  # noqa: E402
 from app.security import ENCRYPTED_PREFIX, decrypt_sensitive, encrypt_sensitive  # noqa: E402
 from app.routers import scraper  # noqa: E402
+from app.routers.telegram import _normalize_delay_range  # noqa: E402
 
 
 def _session_cookie(user_id: int) -> str:
@@ -119,6 +120,14 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertIn("Owner Account", response.text)
         self.assertNotIn("Other Secret Account", response.text)
         self.assertNotIn("other secret job", response.text)
+
+    def test_zero_delay_is_available_and_preserved(self):
+        response = self.client.get("/blast")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text.count('min="0" max="3600"'), 2)
+        self.assertEqual(_normalize_delay_range(0, 0), (0.0, 0.0))
+        self.assertEqual(_normalize_delay_range(0.25, 0.75), (0.25, 0.75))
+        self.assertEqual(_normalize_delay_range(-5, -1), (0.0, 0.0))
 
     def test_header_does_not_render_profile_summary(self):
         response = self.client.get("/dashboard")

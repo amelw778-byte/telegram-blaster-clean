@@ -25,7 +25,7 @@ class BlastJob(Base):
     status = Column(String(20), nullable=False, default="queued", index=True)
     message = Column(Text, nullable=False)
     image_path = Column(String, nullable=True)
-    delay_seconds = Column(Float, nullable=False, default=5)
+    delay_seconds = Column(Float, nullable=False, default=0)
     delay_max_seconds = Column(Float, nullable=True, default=None)
     accounts_json = Column(Text, nullable=False, default="[]")
     consent_confirmed = Column(Boolean, nullable=False, default=False)

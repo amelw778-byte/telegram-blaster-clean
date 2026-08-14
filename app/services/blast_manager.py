@@ -19,7 +19,7 @@ from app.models import BlastJob, BlastRecipient, TelegramAccount
 TERMINAL_RECIPIENT_STATES = {"sent", "failed", "skipped", "paused"}
 ACTIVE_JOB_STATES = {"queued", "running"}
 MAX_CONSECUTIVE_FAILURES = 5  # Berhenti per-akun setelah gagal berturut-turut
-MIN_SEND_DELAY_SECONDS = 5.0
+MIN_SEND_DELAY_SECONDS = 0.0
 
 
 class BlastManager:
@@ -150,7 +150,12 @@ class BlastManager:
                 }
                 message = job.message
                 image_path = job.image_path
-                delay_min = max(MIN_SEND_DELAY_SECONDS, float(job.delay_seconds or MIN_SEND_DELAY_SECONDS))
+                stored_delay_min = (
+                    job.delay_seconds
+                    if job.delay_seconds is not None
+                    else MIN_SEND_DELAY_SECONDS
+                )
+                delay_min = max(MIN_SEND_DELAY_SECONDS, float(stored_delay_min))
                 # delay_max_seconds bisa None jika belum ada kolom (DB lama)
                 delay_max_raw = getattr(job, "delay_max_seconds", None)
                 delay_max = float(delay_max_raw) if delay_max_raw else delay_min
@@ -227,7 +232,8 @@ class BlastManager:
                     # ── Jeda acak antar kiriman ─────────────────────────────
                     if position < len(ids) - 1:
                         actual_delay = random.uniform(delay_min, delay_max)
-                        await asyncio.sleep(actual_delay)
+                        if actual_delay > 0:
+                            await asyncio.sleep(actual_delay)
 
             except Exception as exc:
                 with SessionLocal() as db:
