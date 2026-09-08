@@ -137,6 +137,40 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertEqual(_normalize_delay_range(0.25, 0.75), (0.25, 0.75))
         self.assertEqual(_normalize_delay_range(-5, -1), (0.0, 0.0))
 
+    def test_blast_account_picker_collapses_after_twelve(self):
+        with SessionLocal() as db:
+            extras = [
+                TelegramAccount(
+                    user_id=self.owner_id,
+                    label=f"Extra Account {index}",
+                    phone=f"+6299000000{index:02d}",
+                    session_str=f"extra-session-{index}",
+                    api_id=10 + index,
+                    api_hash=f"extra-hash-{index}",
+                    is_active=1,
+                )
+                for index in range(12)
+            ]
+            db.add_all(extras)
+            db.commit()
+            extra_ids = [account.id for account in extras]
+
+        try:
+            response = self.client.get("/blast")
+        finally:
+            with SessionLocal() as db:
+                db.query(TelegramAccount).filter(TelegramAccount.id.in_(extra_ids)).delete(
+                    synchronize_session=False
+                )
+                db.commit()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text.count('class="account-choice"'), 13)
+        self.assertEqual(response.text.count('class="account-choice" hidden'), 1)
+        self.assertIn('id="show-more-accounts"', response.text)
+        self.assertIn('id="show-all-accounts"', response.text)
+        self.assertIn('id="hide-accounts" hidden', response.text)
+
     def test_header_does_not_render_profile_summary(self):
         response = self.client.get("/dashboard")
         self.assertEqual(response.status_code, 200)

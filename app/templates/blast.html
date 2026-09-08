@@ -18,9 +18,9 @@
     <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
     <div class="field">
       <label>Akun Pengirim <span class="label-note">centang satu atau beberapa akun</span></label>
-      <div class="account-grid">
+      <div class="account-grid" id="blast-account-grid">
         {% for acc in accounts %}
-        <label class="account-choice">
+        <label class="account-choice" {% if loop.index > 12 %}hidden{% endif %}>
           <input type="checkbox" name="account_ids" value="{{ acc.id }}" {% if acc.id in selected_ids %}checked{% endif %}>
           <strong>{{ acc.label or acc.phone }}</strong>
           <div class="muted small" style="margin-top:4px;">{{ acc.phone }}</div>
@@ -28,6 +28,13 @@
         </label>
         {% endfor %}
       </div>
+      {% if accounts|length > 12 %}
+      <div class="flex" id="blast-account-controls" style="margin-top:12px;flex-wrap:wrap;">
+        <button class="btn btn-outline" type="button" id="show-more-accounts">Lihat akun lainnya</button>
+        <button class="btn btn-outline" type="button" id="show-all-accounts">Lihat semua akun</button>
+        <button class="btn btn-gray" type="button" id="hide-accounts" hidden>Sembunyikan semua akun</button>
+      </div>
+      {% endif %}
       <div class="alert alert-info" style="margin-top:12px;margin-bottom:0;">
         Satu akun hanya menjalankan satu antrean pada satu waktu. Bila akun yang sama dipakai tab lain, job berikutnya otomatis menunggu—bukan menabrak proses yang sedang berjalan.
       </div>
@@ -180,6 +187,35 @@ if (form) {
     const btn = document.getElementById('submit-button');
     btn.disabled = true;
     btn.textContent = '⏳ Membuat antrean...';
+  });
+}
+
+const accountChoices = Array.from(document.querySelectorAll('#blast-account-grid .account-choice'));
+const showMoreAccounts = document.getElementById('show-more-accounts');
+const showAllAccounts = document.getElementById('show-all-accounts');
+const hideAccounts = document.getElementById('hide-accounts');
+if (accountChoices.length > 12 && showMoreAccounts && showAllAccounts && hideAccounts) {
+  let visibleAccounts = 12;
+
+  function refreshAccounts() {
+    accountChoices.forEach((choice, index) => { choice.hidden = index >= visibleAccounts; });
+    const allShown = visibleAccounts >= accountChoices.length;
+    showMoreAccounts.hidden = allShown;
+    showAllAccounts.hidden = allShown;
+    hideAccounts.hidden = !allShown;
+  }
+
+  showMoreAccounts.addEventListener('click', () => {
+    visibleAccounts = Math.min(visibleAccounts + 12, accountChoices.length);
+    refreshAccounts();
+  });
+  showAllAccounts.addEventListener('click', () => {
+    visibleAccounts = accountChoices.length;
+    refreshAccounts();
+  });
+  hideAccounts.addEventListener('click', () => {
+    visibleAccounts = 12;
+    refreshAccounts();
   });
 }
 
