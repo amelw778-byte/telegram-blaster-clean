@@ -17,10 +17,13 @@
   <form method="post" action="/send-blast" enctype="multipart/form-data" id="blast-form">
     <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
     <div class="field">
-      <label>Akun Pengirim <span class="label-note">centang satu atau beberapa akun</span></label>
+      <div class="account-list-head">
+        <label>Akun Pengirim <span class="label-note">centang satu atau beberapa akun</span></label>
+        <input class="account-search" id="blast-account-search" type="search" placeholder="Cari nama atau nomor akun…" aria-label="Cari akun pengirim">
+      </div>
       <div class="account-grid" id="blast-account-grid">
         {% for acc in accounts %}
-        <label class="account-choice" {% if loop.index > 12 %}hidden{% endif %}>
+        <label class="account-choice" data-account-search="{{ acc.label or '' }} {{ acc.phone }}" {% if loop.index > 12 %}hidden{% endif %}>
           <input type="checkbox" name="account_ids" value="{{ acc.id }}" {% if acc.id in selected_ids %}checked{% endif %}>
           <strong>{{ acc.label or acc.phone }}</strong>
           <div class="muted small" style="margin-top:4px;">{{ acc.phone }}</div>
@@ -29,7 +32,7 @@
         {% endfor %}
       </div>
       {% if accounts|length > 12 %}
-      <div class="flex" id="blast-account-controls" style="margin-top:12px;flex-wrap:wrap;">
+      <div class="flex pagination-controls" id="blast-account-controls">
         <button class="btn btn-outline" type="button" id="show-more-accounts">Lihat akun lainnya</button>
         <button class="btn btn-outline" type="button" id="show-all-accounts">Lihat semua akun</button>
         <button class="btn btn-gray" type="button" id="hide-accounts" hidden>Sembunyikan semua akun</button>
@@ -194,26 +197,38 @@ const accountChoices = Array.from(document.querySelectorAll('#blast-account-grid
 const showMoreAccounts = document.getElementById('show-more-accounts');
 const showAllAccounts = document.getElementById('show-all-accounts');
 const hideAccounts = document.getElementById('hide-accounts');
-if (accountChoices.length > 12 && showMoreAccounts && showAllAccounts && hideAccounts) {
+const accountSearch = document.getElementById('blast-account-search');
+const accountControls = document.getElementById('blast-account-controls');
+if (accountSearch) {
   let visibleAccounts = 12;
 
   function refreshAccounts() {
-    accountChoices.forEach((choice, index) => { choice.hidden = index >= visibleAccounts; });
-    const allShown = visibleAccounts >= accountChoices.length;
-    showMoreAccounts.hidden = allShown;
-    showAllAccounts.hidden = allShown;
-    hideAccounts.hidden = !allShown;
+    const query = accountSearch?.value.trim().toLocaleLowerCase('id') || '';
+    const matches = accountChoices.filter((choice) =>
+      choice.dataset.accountSearch.toLocaleLowerCase('id').includes(query)
+    );
+    accountChoices.forEach((choice) => { choice.hidden = true; });
+    matches.slice(0, visibleAccounts).forEach((choice) => { choice.hidden = false; });
+    const allShown = visibleAccounts >= matches.length;
+    if (accountControls) accountControls.hidden = matches.length <= 12;
+    if (showMoreAccounts) showMoreAccounts.hidden = allShown;
+    if (showAllAccounts) showAllAccounts.hidden = allShown;
+    if (hideAccounts) hideAccounts.hidden = !allShown;
   }
 
-  showMoreAccounts.addEventListener('click', () => {
+  showMoreAccounts?.addEventListener('click', () => {
     visibleAccounts = Math.min(visibleAccounts + 12, accountChoices.length);
     refreshAccounts();
   });
-  showAllAccounts.addEventListener('click', () => {
+  showAllAccounts?.addEventListener('click', () => {
     visibleAccounts = accountChoices.length;
     refreshAccounts();
   });
-  hideAccounts.addEventListener('click', () => {
+  hideAccounts?.addEventListener('click', () => {
+    visibleAccounts = 12;
+    refreshAccounts();
+  });
+  accountSearch.addEventListener('input', () => {
     visibleAccounts = 12;
     refreshAccounts();
   });

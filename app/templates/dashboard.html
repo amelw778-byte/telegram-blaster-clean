@@ -33,7 +33,7 @@
 <div class="card">
   <div class="flex-between" style="margin-bottom:14px;">
     <div class="card-title" style="margin:0;">Akun Terhubung</div>
-    <div id="accounts-controls" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+    <input class="account-search" id="dashboard-account-search" type="search" placeholder="Cari nama atau nomor akun…" aria-label="Cari akun terhubung">
   </div>
   {% if accounts %}
   <div class="table-wrap">
@@ -41,7 +41,7 @@
       <thead><tr><th>Label / Nomor</th><th>Status</th><th>Ditambahkan</th><th style="text-align:right;">Aksi</th></tr></thead>
       <tbody>
       {% for acc in accounts %}
-        <tr>
+        <tr data-search="{{ acc.label or '' }} {{ acc.phone }}">
           <td><strong>{{ acc.label or acc.phone }}</strong><div class="muted small">{{ acc.phone }}</div></td>
           <td><span class="badge badge-gray" data-account-status="{{ acc.id }}" aria-live="polite">● Memeriksa…</span></td>
           <td class="muted small">{{ acc.created_at.strftime('%d %b %Y %H:%M') if acc.created_at else '—' }}</td>
@@ -59,6 +59,7 @@
       </tbody>
     </table>
   </div>
+  <div class="flex pagination-controls" id="accounts-controls"></div>
   {% else %}
   <div class="alert alert-warn">Belum ada akun. <a class="inline-link" href="/connect-telegram">Hubungkan akun</a> terlebih dahulu.</div>
   {% endif %}
@@ -103,40 +104,45 @@
 (function () {
   const PAGE = 6;
 
-  function initPagination(tableId, controlsId, labelSingle) {
+  function initPagination(tableId, controlsId, labelSingle, searchId) {
     const table  = document.getElementById(tableId);
     const ctrl   = document.getElementById(controlsId);
     if (!table || !ctrl) return;
 
     const rows = Array.from(table.querySelectorAll('tbody tr'));
-    if (rows.length <= PAGE) return; // ≤6 baris: tidak perlu tombol
-
+    const search = searchId ? document.getElementById(searchId) : null;
     let visible = PAGE;
 
-    // Sembunyikan baris di luar halaman pertama
-    rows.forEach((r, i) => { r.style.display = i < PAGE ? '' : 'none'; });
-
     function refresh() {
-      rows.forEach((r, i) => { r.style.display = i < visible ? '' : 'none'; });
-      const allShown = visible >= rows.length;
+      const query = search?.value.trim().toLocaleLowerCase('id') || '';
+      const matches = rows.filter((row) =>
+        (row.dataset.search || row.textContent).toLocaleLowerCase('id').includes(query)
+      );
+      rows.forEach((row) => { row.hidden = true; });
+      matches.slice(0, visible).forEach((row) => { row.hidden = false; });
+      const allShown = visible >= matches.length;
+      ctrl.hidden = matches.length <= PAGE;
       btnMore.style.display = allShown ? 'none' : 'inline-flex';
       btnAll.style.display  = allShown ? 'none' : 'inline-flex';
       btnHide.style.display = allShown ? 'inline-flex' : 'none';
     }
 
     const btnMore = document.createElement('button');
+    btnMore.type = 'button';
     btnMore.className = 'btn btn-outline';
     btnMore.style.fontSize = '.8rem';
     btnMore.textContent = `Lihat ${labelSingle} lainnya`;
     btnMore.onclick = () => { visible = Math.min(visible + PAGE, rows.length); refresh(); };
 
     const btnAll = document.createElement('button');
+    btnAll.type = 'button';
     btnAll.className = 'btn btn-outline';
     btnAll.style.fontSize = '.8rem';
     btnAll.textContent = `Lihat semua ${labelSingle}`;
     btnAll.onclick = () => { visible = rows.length; refresh(); };
 
     const btnHide = document.createElement('button');
+    btnHide.type = 'button';
     btnHide.className = 'btn btn-gray';
     btnHide.style.fontSize = '.8rem';
     btnHide.style.display = 'none';
@@ -146,9 +152,11 @@
     ctrl.appendChild(btnMore);
     ctrl.appendChild(btnAll);
     ctrl.appendChild(btnHide);
+    search?.addEventListener('input', () => { visible = PAGE; refresh(); });
+    refresh();
   }
 
-  initPagination('accounts-table', 'accounts-controls', 'akun');
+  initPagination('accounts-table', 'accounts-controls', 'akun', 'dashboard-account-search');
   initPagination('jobs-table',     'jobs-controls',     'job');
 })();
 </script>

@@ -227,7 +227,7 @@ h1, h2, h3, h4, h5, h6, strong, b { color: #fff; }
 
 label { display: block; margin-bottom: 7px; color: rgba(241, 245, 249, .72); font-size: .73rem; font-weight: 600; letter-spacing: .055em; text-transform: uppercase; }
 .field { margin-bottom: 20px; }
-input[type=text], input[type=number], input[type=password], input[type=email], textarea, select {
+input[type=text], input[type=search], input[type=number], input[type=password], input[type=email], textarea, select {
   width: 100%;
   padding: 11px 14px;
   outline: none;
@@ -296,6 +296,10 @@ code { color: #c4b5fd; font-family: 'SFMono-Regular', Consolas, monospace; font-
 .stat-label { margin-bottom: 6px; color: var(--muted); font-size: .66rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
 .stat-value { color: #fff !important; font-size: clamp(1.25rem, 3vw, 1.62rem); font-weight: 800; letter-spacing: -.035em; }
 .account-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.account-list-head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.account-list-head > label { margin: 0; }
+.account-search { width: min(100%, 280px) !important; }
+.pagination-controls { justify-content: center; margin-top: 14px; flex-wrap: wrap; }
 .account-choice { position: relative; margin: 0; padding: 16px; border: 1px solid rgba(255, 255, 255, .09); border-radius: 14px; cursor: pointer; background: rgba(255, 255, 255, .03); text-transform: none; transition: border-color .2s ease, background .2s ease, transform .2s ease; }
 .account-choice:hover { transform: translateY(-1px); border-color: rgba(99, 102, 241, .42); background: rgba(99, 102, 241, .07); }
 .account-choice:has(input:checked) { border-color: rgba(99, 102, 241, .6); background: linear-gradient(145deg, rgba(99, 102, 241, .12), rgba(168, 85, 247, .07)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 8px 25px rgba(99, 102, 241, .1); }
@@ -625,6 +629,8 @@ code { color: #c4b5fd; font-family: 'SFMono-Regular', Consolas, monospace; font-
   .card { padding: 20px 18px; border-radius: 17px; }
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .account-grid { grid-template-columns: 1fr; }
+  .account-list-head { align-items: stretch; flex-direction: column; }
+  .account-search { width: 100% !important; }
   .table-wrap { margin-inline: -4px; width: calc(100% + 8px); }
   th, td { padding: 10px 12px; }
   .login-story, .login-panel { padding: 30px 24px; }

@@ -126,6 +126,7 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertIn("Owner Account", response.text)
         self.assertIn(f'data-account-status="{self.owner_account_id}"', response.text)
         self.assertIn("● Memeriksa…", response.text)
+        self.assertIn('id="dashboard-account-search"', response.text)
         self.assertNotIn("Other Secret Account", response.text)
         self.assertNotIn("other secret job", response.text)
 
@@ -166,10 +167,12 @@ class TenantIsolationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.text.count('class="account-choice"'), 13)
-        self.assertEqual(response.text.count('class="account-choice" hidden'), 1)
+        self.assertEqual(len(re.findall(r'<label class="account-choice"[^>]* hidden', response.text)), 1)
         self.assertIn('id="show-more-accounts"', response.text)
         self.assertIn('id="show-all-accounts"', response.text)
         self.assertIn('id="hide-accounts" hidden', response.text)
+        self.assertIn('id="blast-account-search"', response.text)
+        self.assertIn('class="flex pagination-controls"', response.text)
 
     def test_header_does_not_render_profile_summary(self):
         response = self.client.get("/dashboard")
