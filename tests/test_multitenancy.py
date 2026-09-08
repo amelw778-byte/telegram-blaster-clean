@@ -124,6 +124,8 @@ class TenantIsolationTests(unittest.TestCase):
         response = self.client.get("/dashboard")
         self.assertEqual(response.status_code, 200)
         self.assertIn("Owner Account", response.text)
+        self.assertIn(f'data-account-status="{self.owner_account_id}"', response.text)
+        self.assertIn("● Memeriksa…", response.text)
         self.assertNotIn("Other Secret Account", response.text)
         self.assertNotIn("other secret job", response.text)
 
@@ -350,6 +352,20 @@ class TenantIsolationTests(unittest.TestCase):
 
         started = {call.args[0] for call in starter.call_args_list}
         self.assertTrue({self.owner_account_id, self.other_account_id}.issubset(started))
+
+    def test_inbox_status_only_reports_current_users_connected_accounts(self):
+        with patch.object(
+            inbox_manager,
+            "connected",
+            side_effect=lambda account_id: account_id in {
+                self.owner_account_id,
+                self.other_account_id,
+            },
+        ):
+            response = self.client.get("/api/inbox/unread")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["connected_account_ids"], [self.owner_account_id])
 
     def test_inbox_reply_cannot_use_another_users_account(self):
         dashboard = self.client.get("/dashboard")

@@ -43,7 +43,7 @@
       {% for acc in accounts %}
         <tr>
           <td><strong>{{ acc.label or acc.phone }}</strong><div class="muted small">{{ acc.phone }}</div></td>
-          <td><span class="badge badge-green">● Terhubung</span></td>
+          <td><span class="badge badge-gray" data-account-status="{{ acc.id }}" aria-live="polite">● Memeriksa…</span></td>
           <td class="muted small">{{ acc.created_at.strftime('%d %b %Y %H:%M') if acc.created_at else '—' }}</td>
           <td>
             <div class="flex" style="justify-content:flex-end;">

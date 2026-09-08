@@ -68,6 +68,15 @@ if (inboxBadges.length) {
         badge.hidden = !data.unread_count;
       });
 
+      const connectedAccounts = new Set(data.connected_account_ids || []);
+      document.querySelectorAll('[data-account-status]').forEach((badge) => {
+        const connected = connectedAccounts.has(Number(badge.dataset.accountStatus));
+        badge.classList.toggle('badge-green', connected);
+        badge.classList.toggle('badge-red', !connected);
+        badge.classList.remove('badge-gray');
+        badge.textContent = connected ? '● Aktif' : '● Nonaktif';
+      });
+
       const previous = Number(sessionStorage.getItem('latestInboxMessageId') || 0);
       if (
         previous && data.latest_id > previous &&

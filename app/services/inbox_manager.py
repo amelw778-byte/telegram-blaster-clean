@@ -32,6 +32,11 @@ class InboxManager:
         selected = os.getenv("INBOX_ACCOUNT_ID", "").strip()
         return not selected or selected == str(account_id)
 
+    def connected(self, account_id: int) -> bool:
+        task = self.tasks.get(account_id)
+        client = self.clients.get(account_id)
+        return bool(task and not task.done() and client and client.is_connected())
+
     async def start_all(self) -> None:
         if not self.enabled():
             return

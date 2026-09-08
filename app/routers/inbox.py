@@ -172,6 +172,12 @@ def unread(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    account_ids = {
+        row[0]
+        for row in db.query(TelegramAccount.id).filter(
+            TelegramAccount.user_id == current_user.id,
+        )
+    }
     query = db.query(InboxMessage).filter(
         InboxMessage.user_id == current_user.id,
         InboxMessage.direction == "in",
@@ -188,4 +194,7 @@ def unread(
         "peer_name": latest.peer_name if latest else None,
         "account_label": (latest.account.label or latest.account.phone) if latest else None,
         "url": f"/inbox?account_id={latest.account_id}&peer_id={latest.peer_id}" if latest else "/inbox",
+        "connected_account_ids": [
+            account_id for account_id in account_ids if inbox_manager.connected(account_id)
+        ],
     })
