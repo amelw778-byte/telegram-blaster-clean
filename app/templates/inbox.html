@@ -3,42 +3,120 @@
 
 {% block extra_head %}
 <style>
-  .inbox-layout { display:grid; grid-template-columns:minmax(260px, 340px) 1fr; min-height:620px; padding:0; }
-  .conversation-list { border-right:1px solid var(--border); overflow:auto; }
-  .conversation-head, .chat-head { padding:18px 20px; border-bottom:1px solid var(--border); }
-  .conversation-item { display:block; padding:15px 20px; border-bottom:1px solid rgba(255,255,255,.06); transition:background .2s ease; }
-  .conversation-item:hover, .conversation-item.active { background:rgba(99,102,241,.12); }
-  .conversation-meta { display:flex; justify-content:space-between; gap:12px; align-items:center; }
-  .conversation-preview { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; margin-top:4px; }
-  .conversation-unread { min-width:22px; height:22px; display:inline-grid; place-items:center; padding:0 6px; border-radius:99px; background:var(--primary); color:#fff; font-size:.7rem; font-weight:700; }
-  .chat-panel { display:flex; min-width:0; flex-direction:column; }
-  .chat-messages { flex:1; max-height:520px; overflow:auto; padding:22px; }
-  .chat-row { display:flex; margin-bottom:12px; }
+  .inbox-page-head { margin-bottom:16px; }
+  .inbox-page-head h1 { display:flex; align-items:center; gap:10px; }
+  .live-mark { width:8px; height:8px; border-radius:50%; background:#22c55e; box-shadow:0 0 12px rgba(34,197,94,.8); }
+  .notification-button { padding:8px 13px; font-size:.76rem; }
+
+  .inbox-shell {
+    display:grid;
+    grid-template-columns:350px minmax(0, 1fr);
+    height:min(720px, calc(100vh - 190px));
+    min-height:560px;
+    padding:0;
+    overflow:hidden;
+    border-radius:18px;
+    background:rgba(7,3,28,.86);
+  }
+  .inbox-shell::after { display:none; }
+  .inbox-shell:hover { transform:none; border-color:var(--border); box-shadow:var(--shadow); }
+
+  .conversation-list { display:flex; min-width:0; flex-direction:column; border-right:1px solid var(--border); background:rgba(255,255,255,.018); }
+  .conversation-head { padding:18px 16px 13px; border-bottom:1px solid var(--border); }
+  .conversation-title { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .conversation-title strong { font-size:.92rem; }
+  .conversation-total { color:var(--muted); font-size:.69rem; font-weight:600; }
+  .conversation-search { position:relative; }
+  .conversation-search svg { position:absolute; top:50%; left:11px; width:15px; height:15px; color:var(--muted); transform:translateY(-50%); pointer-events:none; }
+  .conversation-search input { height:38px; padding:8px 12px 8px 34px; border-radius:10px; background:rgba(255,255,255,.045); font-size:.76rem; }
+  .conversation-scroll { flex:1; min-height:0; overflow:auto; }
+  .conversation-item { position:relative; display:grid; grid-template-columns:42px minmax(0,1fr) auto; gap:11px; padding:13px 14px; border-bottom:1px solid rgba(255,255,255,.055); transition:background .16s ease; }
+  .conversation-item:hover { background:rgba(255,255,255,.045); }
+  .conversation-item.active { background:linear-gradient(90deg, rgba(99,102,241,.18), rgba(99,102,241,.07)); }
+  .conversation-item.active::before { content:''; position:absolute; inset:8px auto 8px 0; width:3px; border-radius:0 4px 4px 0; background:var(--primary-light); }
+  .chat-avatar { display:grid; width:42px; height:42px; place-items:center; flex:0 0 auto; border:1px solid rgba(129,140,248,.22); border-radius:50%; color:#e0e7ff; background:linear-gradient(145deg, rgba(99,102,241,.38), rgba(168,85,247,.22)); font-size:.86rem; font-weight:700; text-transform:uppercase; }
+  .conversation-body { min-width:0; }
+  .conversation-name { display:block; overflow:hidden; color:#f8fafc; font-size:.79rem; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+  .account-route { display:flex; align-items:center; max-width:100%; margin-top:2px; color:#a5b4fc; font-size:.64rem; font-weight:600; }
+  .account-route::before { content:''; width:5px; height:5px; margin-right:5px; border-radius:50%; background:#818cf8; }
+  .conversation-preview { display:block; margin-top:3px; overflow:hidden; color:var(--muted); font-size:.7rem; text-overflow:ellipsis; white-space:nowrap; }
+  .conversation-side { display:flex; align-items:flex-end; flex-direction:column; gap:7px; }
+  .conversation-time { color:#64748b; font-size:.61rem; white-space:nowrap; }
+  .conversation-unread { min-width:19px; height:19px; display:inline-grid; place-items:center; padding:0 5px; border-radius:99px; color:#fff; background:linear-gradient(135deg,var(--primary),var(--secondary)); font-size:.61rem; font-weight:700; }
+
+  .chat-panel { display:flex; min-width:0; min-height:0; flex-direction:column; }
+  .chat-head { display:flex; min-height:72px; align-items:center; gap:12px; padding:13px 18px; border-bottom:1px solid var(--border); background:rgba(3,0,20,.6); }
+  .chat-head-main { display:block; min-width:0; flex:1; }
+  .chat-person { display:block; overflow:hidden; font-size:.86rem; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+  .chat-identity { display:block; color:var(--muted); font-size:.67rem; }
+  .sender-chip { display:flex; align-items:center; gap:7px; padding:7px 10px; border:1px solid rgba(99,102,241,.23); border-radius:9px; color:#c7d2fe; background:rgba(99,102,241,.08); font-size:.66rem; font-weight:600; white-space:nowrap; }
+  .sender-chip svg { width:14px; height:14px; }
+  .mobile-back { display:none; color:var(--muted); font-size:1.25rem; }
+
+  .chat-messages {
+    flex:1;
+    min-height:0;
+    overflow:auto;
+    padding:22px 28px;
+    background:
+      radial-gradient(circle at 25% 0%, rgba(99,102,241,.08), transparent 38%),
+      radial-gradient(circle at 75% 100%, rgba(168,85,247,.055), transparent 42%),
+      rgba(3,0,20,.48);
+  }
+  .chat-row { display:flex; margin-bottom:7px; }
   .chat-row.out { justify-content:flex-end; }
-  .chat-bubble { max-width:min(76%, 620px); padding:10px 13px; border:1px solid var(--border); border-radius:14px 14px 14px 4px; background:var(--surface-2); white-space:pre-wrap; overflow-wrap:anywhere; }
-  .chat-row.out .chat-bubble { border-color:rgba(99,102,241,.34); border-radius:14px 14px 4px 14px; background:rgba(99,102,241,.2); }
-  .chat-time { display:block; margin-top:5px; color:var(--muted); font-size:.68rem; }
-  .reply-form { display:flex; gap:10px; align-items:flex-end; padding:16px 20px; border-top:1px solid var(--border); }
-  .reply-form textarea { min-height:48px; max-height:150px; resize:vertical; }
-  .empty-chat { display:grid; flex:1; place-items:center; padding:40px; text-align:center; color:var(--muted); }
+  .chat-bubble { width:fit-content; max-width:min(58%, 520px); padding:7px 10px 6px; border:1px solid rgba(255,255,255,.08); border-radius:11px 11px 11px 3px; color:#e2e8f0; background:#17112f; box-shadow:0 3px 10px rgba(0,0,0,.14); font-size:.78rem; line-height:1.42; overflow-wrap:anywhere; }
+  .message-text { white-space:pre-wrap; }
+  .chat-row.out .chat-bubble { border-color:rgba(129,140,248,.2); border-radius:11px 11px 3px 11px; color:#f8fafc; background:linear-gradient(145deg,#353277,#2d285f); }
+  .bubble-meta { display:flex; justify-content:flex-end; gap:4px; margin-top:2px; color:#94a3b8; font-size:.57rem; line-height:1; white-space:nowrap; }
+  .chat-row.out .bubble-meta { color:#c7d2fe; }
+  .sent-check { color:#67e8f9; font-weight:700; }
+
+  .reply-wrap { padding:13px 16px; border-top:1px solid var(--border); background:rgba(3,0,20,.74); }
+  .reply-form { display:flex; align-items:flex-end; gap:9px; padding:6px 6px 6px 14px; border:1px solid rgba(255,255,255,.1); border-radius:15px; background:rgba(255,255,255,.052); transition:border-color .2s ease, box-shadow .2s ease; }
+  .reply-form:focus-within { border-color:rgba(129,140,248,.42); box-shadow:0 0 0 3px rgba(99,102,241,.08); }
+  .reply-form textarea { min-height:38px; max-height:116px; padding:8px 2px; border:0; outline:0; resize:none; color:#f8fafc; background:transparent; box-shadow:none; font-size:.79rem; line-height:1.45; }
+  .reply-form textarea:focus { border:0; box-shadow:none; }
+  .send-button { min-width:88px; min-height:38px; gap:7px; padding:8px 14px; border-radius:11px; font-size:.74rem; }
+  .send-button svg { width:15px; height:15px; }
+  .composer-hint { margin:6px 5px 0; color:#64748b; font-size:.58rem; text-align:right; }
+
+  .empty-chat { display:grid; flex:1; min-height:180px; place-items:center; padding:36px; color:var(--muted); text-align:center; }
+  .empty-icon { display:grid; width:56px; height:56px; margin:0 auto 12px; place-items:center; border:1px solid rgba(129,140,248,.2); border-radius:18px; color:#a5b4fc; background:rgba(99,102,241,.09); }
+  .empty-icon svg { width:25px; height:25px; }
+  .empty-chat strong { display:block; margin-bottom:4px; font-size:.84rem; }
+  .empty-chat p { max-width:280px; font-size:.7rem; }
+
   @media (max-width:760px) {
-    .inbox-layout { grid-template-columns:1fr; }
-    .conversation-list { border-right:0; border-bottom:1px solid var(--border); max-height:280px; }
-    .chat-messages { max-height:430px; }
-    .reply-form { flex-direction:column; align-items:stretch; }
-    .chat-bubble { max-width:88%; }
+    .inbox-page-head.chat-selected { display:none; }
+    .inbox-page-head { align-items:flex-start; }
+    .inbox-shell { grid-template-columns:1fr; height:calc(100vh - 170px); min-height:520px; }
+    .inbox-shell.has-selection { height:calc(100dvh - 100px); min-height:0; }
+    .inbox-shell.has-selection .conversation-list { display:none; }
+    .inbox-shell:not(.has-selection) .chat-panel { display:none; }
+    .conversation-list { border-right:0; }
+    .mobile-back { display:inline-flex; }
+    .chat-head { min-height:64px; padding:10px 13px; }
+    .chat-head .chat-avatar { width:38px; height:38px; }
+    .sender-chip span { display:none; }
+    .chat-messages { padding:16px 12px; }
+    .chat-bubble { max-width:78%; }
+    .reply-wrap { padding:9px; }
+    .send-button { min-width:42px; width:42px; padding:0; }
+    .send-button span { display:none; }
+    .composer-hint { display:none; }
   }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="flex-between page-head">
+<div class="flex-between page-head inbox-page-head {% if selected %}chat-selected{% endif %}">
   <div>
     <span class="eyebrow">Balasan pelanggan</span>
-    <h1>Inbox <span class="gradient-text">Telegram</span></h1>
-    <p>Balasan otomatis dikirim melalui akun yang menerima pesan.</p>
+    <h1>Inbox <span class="gradient-text">Telegram</span><span class="live-mark" title="Listener aktif"></span></h1>
+    <p>Satu inbox untuk semua akun. Setiap balasan otomatis memakai akun penerima.</p>
   </div>
-  <button class="btn btn-outline" type="button" id="enable-inbox-notifications">Aktifkan notifikasi browser</button>
+  <button class="btn btn-outline notification-button" type="button" id="enable-inbox-notifications">🔔 Aktifkan notifikasi</button>
 </div>
 
 {% if error == 'invalid_message' %}
@@ -47,50 +125,94 @@
 <div class="alert alert-error">Balasan gagal dikirim. Pastikan akun penerima masih terhubung.</div>
 {% endif %}
 
-<div class="card inbox-layout">
+<div class="card inbox-shell {% if selected %}has-selection{% endif %}">
   <section class="conversation-list" aria-label="Daftar percakapan">
-    <div class="conversation-head"><strong>Percakapan</strong></div>
-    {% for item in conversations %}
-    <a class="conversation-item {% if selected and selected.account_id == item.account_id and selected.peer_id == item.peer_id %}active{% endif %}"
-       href="/inbox?account_id={{ item.account_id }}&peer_id={{ item.peer_id }}">
-      <div class="conversation-meta">
-        <strong>{{ item.peer_name }}</strong>
-        {% if item.unread %}<span class="conversation-unread">{{ item.unread }}</span>{% endif %}
+    <div class="conversation-head">
+      <div class="conversation-title">
+        <strong>Pesan</strong>
+        <span class="conversation-total">{{ conversations|length }} percakapan</span>
       </div>
-      <div class="small" style="color:#c4b5fd;">via {{ item.account_label }}</div>
-      <div class="conversation-preview muted small">{{ item.latest.body }}</div>
-    </a>
-    {% else %}
-    <div class="empty-chat">Belum ada balasan pelanggan.</div>
-    {% endfor %}
-  </section>
-
-  <section class="chat-panel" aria-label="Isi percakapan">
-    {% if selected %}
-    <div class="chat-head">
-      <strong>{{ selected.peer_name }}</strong>
-      {% if selected.peer_username %}<span class="muted small"> · @{{ selected.peer_username }}</span>{% endif %}
-      <div class="small" style="color:#c4b5fd;">Balas otomatis sebagai {{ selected.account_label }}</div>
+      <div class="conversation-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+        <input id="conversation-search" type="search" placeholder="Cari pelanggan atau akun..." aria-label="Cari percakapan">
+      </div>
     </div>
-    <div class="chat-messages" id="chat-messages">
-      {% for message in messages %}
-      <div class="chat-row {{ message.direction }}">
-        <div class="chat-bubble">
-          {{ message.body }}
-          <span class="chat-time">{{ message.created_at.strftime('%d %b %Y %H:%M') }}</span>
+    <div class="conversation-scroll" id="conversation-scroll">
+      {% for item in conversations %}
+      <a class="conversation-item {% if selected and selected.account_id == item.account_id and selected.peer_id == item.peer_id %}active{% endif %}"
+         data-search="{{ item.peer_name }} {{ item.peer_username or '' }} {{ item.account_label }}"
+         href="/inbox?account_id={{ item.account_id }}&peer_id={{ item.peer_id }}">
+        <span class="chat-avatar">{{ item.peer_name[:1] }}</span>
+        <span class="conversation-body">
+          <span class="conversation-name">{{ item.peer_name }}</span>
+          <span class="account-route">{{ item.account_label }}</span>
+          <span class="conversation-preview">{% if item.latest.direction == 'out' %}Anda: {% endif %}{{ item.latest.body }}</span>
+        </span>
+        <span class="conversation-side">
+          <span class="conversation-time">{{ item.latest.created_at.strftime('%H:%M') }}</span>
+          {% if item.unread %}<span class="conversation-unread">{{ item.unread }}</span>{% endif %}
+        </span>
+      </a>
+      {% else %}
+      <div class="empty-chat">
+        <div>
+          <span class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path></svg></span>
+          <strong>Belum ada balasan</strong>
+          <p>Pesan pelanggan akan muncul otomatis di sini.</p>
         </div>
       </div>
       {% endfor %}
     </div>
-    <form class="reply-form" method="post" action="/inbox/reply">
-      <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
-      <input type="hidden" name="account_id" value="{{ selected.account_id }}">
-      <input type="hidden" name="peer_id" value="{{ selected.peer_id }}">
-      <textarea name="body" rows="2" maxlength="4096" placeholder="Tulis balasan..." aria-label="Balasan" required></textarea>
-      <button class="btn btn-primary" type="submit">Kirim sebagai {{ selected.account_label }}</button>
-    </form>
+  </section>
+
+  <section class="chat-panel" aria-label="Isi percakapan">
+    {% if selected %}
+    <header class="chat-head">
+      <a class="mobile-back" href="/inbox" aria-label="Kembali ke daftar percakapan">‹</a>
+      <span class="chat-avatar">{{ selected.peer_name[:1] }}</span>
+      <span class="chat-head-main">
+        <span class="chat-person">{{ selected.peer_name }}</span>
+        <span class="chat-identity">{% if selected.peer_username %}@{{ selected.peer_username }}{% else %}Telegram ID {{ selected.peer_id }}{% endif %}</span>
+      </span>
+      <span class="sender-chip" title="Akun yang otomatis dipakai untuk membalas">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
+        <span>Balas sebagai</span> {{ selected.account_label }}
+      </span>
+    </header>
+    <div class="chat-messages" id="chat-messages">
+      {% for message in messages %}
+      <div class="chat-row {{ message.direction }}">
+        <div class="chat-bubble">
+          <span class="message-text">{{ message.body }}</span>
+          <span class="bubble-meta">
+            {{ message.created_at.strftime('%H:%M') }}
+            {% if message.direction == 'out' %}<span class="sent-check">✓</span>{% endif %}
+          </span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="reply-wrap">
+      <form class="reply-form" method="post" action="/inbox/reply" id="reply-form">
+        <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
+        <input type="hidden" name="account_id" value="{{ selected.account_id }}">
+        <input type="hidden" name="peer_id" value="{{ selected.peer_id }}">
+        <textarea name="body" rows="1" maxlength="4096" placeholder="Tulis pesan..." aria-label="Balasan" required></textarea>
+        <button class="btn btn-primary send-button" type="submit" aria-label="Kirim pesan">
+          <span>Kirim</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
+        </button>
+      </form>
+      <div class="composer-hint">Enter untuk kirim · Shift + Enter untuk baris baru</div>
+    </div>
     {% else %}
-    <div class="empty-chat">Pilih percakapan untuk membaca dan membalas.</div>
+    <div class="empty-chat">
+      <div>
+        <span class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4 4Z"></path><path d="M8 9h8M8 13h5"></path></svg></span>
+        <strong>Pilih sebuah percakapan</strong>
+        <p>Baca pesan dan balas tanpa memilih akun pengirim lagi.</p>
+      </div>
+    </div>
     {% endif %}
   </section>
 </div>
@@ -101,13 +223,33 @@
 const chat = document.getElementById('chat-messages');
 if (chat) chat.scrollTop = chat.scrollHeight;
 
+const search = document.getElementById('conversation-search');
+if (search) {
+  search.addEventListener('input', () => {
+    const query = search.value.trim().toLocaleLowerCase('id');
+    document.querySelectorAll('.conversation-item').forEach((item) => {
+      item.hidden = !item.dataset.search.toLocaleLowerCase('id').includes(query);
+    });
+  });
+}
+
+const replyForm = document.getElementById('reply-form');
+const replyInput = replyForm?.querySelector('textarea');
+if (replyInput) {
+  replyInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      replyForm.requestSubmit();
+    }
+  });
+}
+
 const notificationButton = document.getElementById('enable-inbox-notifications');
 if (!('Notification' in window) || Notification.permission === 'granted') {
   notificationButton.hidden = true;
 } else {
   notificationButton.addEventListener('click', async () => {
-    const permission = await Notification.requestPermission();
-    notificationButton.hidden = permission === 'granted';
+    notificationButton.hidden = await Notification.requestPermission() === 'granted';
   });
 }
 </script>
