@@ -1,5 +1,7 @@
 .env
 .venv/
+.backups/
+.experiment-data/
 __pycache__/
 *.py[cod]
 *.db

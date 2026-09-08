@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import hashlib
 import json
 import os
@@ -7,7 +8,9 @@ import re
 import sqlite3
 import time
 import unittest
+from unittest.mock import AsyncMock, patch
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from itsdangerous import TimestampSigner
 
@@ -19,19 +22,22 @@ os.environ["BLASTER_DB_PATH"] = str(TEST_DB)
 os.environ["SESSION_SECRET"] = "test-session-secret-for-porslabs"
 os.environ["DATA_ENCRYPTION_KEY"] = "test-data-encryption-key-for-porslabs"
 os.environ["BOOTSTRAP_OWNER_EMAIL"] = "owner@example.com"
+os.environ["INBOX_LISTENERS_ENABLED"] = "false"
 os.environ.pop("APP_PASSWORD", None)
 os.environ.pop("GOOGLE_CLIENT_ID", None)
 os.environ.pop("GOOGLE_CLIENT_SECRET", None)
 
 from fastapi.testclient import TestClient  # noqa: E402
+from telethon import types  # noqa: E402
 
 from app.auth import hash_password, upsert_google_user, verify_password  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import BlastJob, DeviceSession, TelegramAccount, User  # noqa: E402
+from app.models import BlastJob, DeviceSession, InboxMessage, TelegramAccount, User  # noqa: E402
 from app.security import ENCRYPTED_PREFIX, decrypt_sensitive, encrypt_sensitive  # noqa: E402
 from app.routers import scraper  # noqa: E402
 from app.routers.telegram import _normalize_delay_range  # noqa: E402
+from app.services.inbox_manager import inbox_manager  # noqa: E402
 
 
 def _session_cookie(user_id: int) -> str:
@@ -182,6 +188,129 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         with SessionLocal() as db:
             self.assertIsNotNone(db.get(TelegramAccount, self.other_account_id))
+
+    def test_inbox_only_renders_current_users_messages(self):
+        with SessionLocal() as db:
+            db.add_all([
+                InboxMessage(
+                    user_id=self.owner_id,
+                    account_id=self.owner_account_id,
+                    peer_id=101,
+                    peer_access_hash=1001,
+                    peer_name="Owner Customer",
+                    peer_username="owner_customer",
+                    telegram_message_id=1,
+                    direction="in",
+                    body="Owner reply",
+                ),
+                InboxMessage(
+                    user_id=self.other_id,
+                    account_id=self.other_account_id,
+                    peer_id=202,
+                    peer_access_hash=2002,
+                    peer_name="Other Secret Customer",
+                    peer_username="other_secret",
+                    telegram_message_id=1,
+                    direction="in",
+                    body="Other secret reply",
+                ),
+            ])
+            db.commit()
+
+        response = self.client.get("/inbox")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Owner Customer", response.text)
+        self.assertNotIn("Other Secret Customer", response.text)
+        self.assertNotIn("Other secret reply", response.text)
+
+    def test_inbox_listener_stores_the_receiving_account(self):
+        class FakeEvent:
+            is_private = True
+            raw_text = "Balasan masuk untuk Meysa"
+            message = SimpleNamespace(id=77, date=datetime.utcnow(), media=None)
+
+            async def get_input_chat(self):
+                return types.InputPeerUser(707, 7007)
+
+            async def get_chat(self):
+                return SimpleNamespace(
+                    first_name="Pelanggan",
+                    last_name="Baru",
+                    username="pelanggan_baru",
+                )
+
+        asyncio.run(inbox_manager._store_incoming(self.owner_account_id, FakeEvent()))
+        with SessionLocal() as db:
+            message = db.query(InboxMessage).filter(
+                InboxMessage.account_id == self.owner_account_id,
+                InboxMessage.peer_id == 707,
+            ).one()
+            self.assertEqual(message.user_id, self.owner_id)
+            self.assertEqual(message.body, "Balasan masuk untuk Meysa")
+
+    def test_inbox_reply_automatically_uses_receiving_account(self):
+        peer_id = 303
+        access_hash = 3003
+        with SessionLocal() as db:
+            db.add(InboxMessage(
+                user_id=self.owner_id,
+                account_id=self.owner_account_id,
+                peer_id=peer_id,
+                peer_access_hash=access_hash,
+                peer_name="Meysa Customer",
+                peer_username="meysa_customer",
+                telegram_message_id=1,
+                direction="in",
+                body="Saya tertarik",
+            ))
+            db.commit()
+
+        inbox = self.client.get(
+            f"/inbox?account_id={self.owner_account_id}&peer_id={peer_id}"
+        )
+        sender = AsyncMock(return_value=(2, datetime.utcnow()))
+        with patch("app.routers.inbox.inbox_manager.send_reply", sender):
+            response = self.client.post(
+                "/inbox/reply",
+                data={
+                    "csrf_token": _csrf_from(inbox.text),
+                    "account_id": self.owner_account_id,
+                    "peer_id": peer_id,
+                    "body": "Baik, saya bantu.",
+                },
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 303)
+        sender.assert_awaited_once_with(
+            self.owner_account_id,
+            peer_id,
+            access_hash,
+            "Baik, saya bantu.",
+        )
+        with SessionLocal() as db:
+            reply = db.query(InboxMessage).filter(
+                InboxMessage.account_id == self.owner_account_id,
+                InboxMessage.peer_id == peer_id,
+                InboxMessage.direction == "out",
+            ).one()
+            self.assertEqual(reply.body, "Baik, saya bantu.")
+
+    def test_inbox_reply_cannot_use_another_users_account(self):
+        dashboard = self.client.get("/dashboard")
+        sender = AsyncMock()
+        with patch("app.routers.inbox.inbox_manager.send_reply", sender):
+            response = self.client.post(
+                "/inbox/reply",
+                data={
+                    "csrf_token": _csrf_from(dashboard.text),
+                    "account_id": self.other_account_id,
+                    "peer_id": 202,
+                    "body": "Tidak boleh terkirim",
+                },
+            )
+        self.assertEqual(response.status_code, 404)
+        sender.assert_not_awaited()
 
     def test_scraper_poll_is_scoped_to_its_owner(self):
         scraper._jobs["other-job"] = {

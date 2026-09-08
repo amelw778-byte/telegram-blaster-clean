@@ -28,6 +28,7 @@
 
     <nav class="nav-links" aria-label="Navigasi utama">
       <a class="nav-link {% if path == '/dashboard' %}active{% endif %}" href="/dashboard">Beranda</a>
+      <a class="nav-link {% if path.startswith('/inbox') %}active{% endif %}" href="/inbox">Inbox <span class="unread-dot" data-inbox-count hidden></span></a>
       <a class="nav-link {% if path == '/blast' %}active{% endif %}" href="/blast">Blast</a>
       <a class="nav-link {% if path.startswith('/scraper') or path.startswith('/api/scraper') %}active{% endif %}" href="/scraper">Scraper</a>
       <a class="nav-link {% if path.startswith('/connect-telegram') or path in ['/verify-otp', '/verify-2fa', '/resend-otp'] %}active{% endif %}" href="/connect-telegram">Akun</a>
@@ -43,6 +44,7 @@
 <aside class="mobile-drawer" id="mobile-drawer">
   <nav class="mobile-nav" aria-label="Navigasi seluler">
     <a class="nav-link {% if path == '/dashboard' %}active{% endif %}" href="/dashboard">Beranda</a>
+    <a class="nav-link {% if path.startswith('/inbox') %}active{% endif %}" href="/inbox">Inbox <span class="unread-dot" data-inbox-count hidden></span></a>
     <a class="nav-link {% if path == '/blast' %}active{% endif %}" href="/blast">Blast</a>
     <a class="nav-link {% if path.startswith('/scraper') %}active{% endif %}" href="/scraper">Scraper</a>
     <a class="nav-link {% if path.startswith('/connect-telegram') %}active{% endif %}" href="/connect-telegram">Akun</a>

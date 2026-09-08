@@ -20,6 +20,7 @@ from app.auth import get_current_user, verify_csrf
 from app.database import DB_PATH, get_db
 from app.models import BlastJob, BlastRecipient, TelegramAccount, User
 from app.services.blast_manager import blast_manager
+from app.services.inbox_manager import inbox_manager
 
 router = APIRouter()
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -312,6 +313,7 @@ async def _save_account(request, db, current_user, phone, api_id, api_hash, labe
         db.add(account)
     db.commit()
     db.refresh(account)
+    inbox_manager.start(account.id)
 
     return _render(request, "connect_telegram.html", {
         "step": "blast",
@@ -374,7 +376,7 @@ def stop_job(
 
 
 @router.post("/delete-account/{account_id}")
-def delete_account(
+async def delete_account(
     account_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -400,6 +402,7 @@ def delete_account(
     if running:
         return RedirectResponse(url="/dashboard?error=account_busy", status_code=303)
 
+    await inbox_manager.stop(account.id)
     db.delete(account)
     db.commit()
     return _back_dashboard()

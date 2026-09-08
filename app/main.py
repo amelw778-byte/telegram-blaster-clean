@@ -24,8 +24,9 @@ from sqlalchemy import text
 from app.auth import AuthenticationRequired, session_secret_for_middleware
 from app.database import SessionLocal, engine
 from app.migrations import initialize_database
-from app.models import BlastJob, BlastRecipient, DeviceSession, TelegramAccount, User  # noqa: F401
+from app.models import BlastJob, BlastRecipient, DeviceSession, InboxMessage, TelegramAccount, User  # noqa: F401
 from app.services.blast_manager import blast_manager
+from app.services.inbox_manager import inbox_manager
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -53,10 +54,11 @@ async def authentication_required(request: Request, _exc: AuthenticationRequired
     return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
 
-from app.routers import auth, dashboard, scraper, security, telegram
+from app.routers import auth, dashboard, inbox, scraper, security, telegram
 
 app.include_router(auth.router)
 app.include_router(dashboard.router)
+app.include_router(inbox.router)
 app.include_router(telegram.router)
 app.include_router(scraper.router)
 app.include_router(security.router)
@@ -70,7 +72,13 @@ async def resume_jobs_after_restart():
             {TelegramAccount.is_active: 1}, synchronize_session=False
         )
         db.commit()
+    await inbox_manager.start_all()
     await blast_manager.resume_incomplete_jobs()
+
+
+@app.on_event("shutdown")
+async def disconnect_inbox_accounts():
+    await inbox_manager.shutdown()
 
 
 @app.get("/")

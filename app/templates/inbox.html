@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Inbox — PorsLabs Telegram Blaster{% endblock %}
+
+{% block extra_head %}
+<style>
+  .inbox-layout { display:grid; grid-template-columns:minmax(260px, 340px) 1fr; min-height:620px; padding:0; }
+  .conversation-list { border-right:1px solid var(--border); overflow:auto; }
+  .conversation-head, .chat-head { padding:18px 20px; border-bottom:1px solid var(--border); }
+  .conversation-item { display:block; padding:15px 20px; border-bottom:1px solid rgba(255,255,255,.06); transition:background .2s ease; }
+  .conversation-item:hover, .conversation-item.active { background:rgba(99,102,241,.12); }
+  .conversation-meta { display:flex; justify-content:space-between; gap:12px; align-items:center; }
+  .conversation-preview { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; margin-top:4px; }
+  .conversation-unread { min-width:22px; height:22px; display:inline-grid; place-items:center; padding:0 6px; border-radius:99px; background:var(--primary); color:#fff; font-size:.7rem; font-weight:700; }
+  .chat-panel { display:flex; min-width:0; flex-direction:column; }
+  .chat-messages { flex:1; max-height:520px; overflow:auto; padding:22px; }
+  .chat-row { display:flex; margin-bottom:12px; }
+  .chat-row.out { justify-content:flex-end; }
+  .chat-bubble { max-width:min(76%, 620px); padding:10px 13px; border:1px solid var(--border); border-radius:14px 14px 14px 4px; background:var(--surface-2); white-space:pre-wrap; overflow-wrap:anywhere; }
+  .chat-row.out .chat-bubble { border-color:rgba(99,102,241,.34); border-radius:14px 14px 4px 14px; background:rgba(99,102,241,.2); }
+  .chat-time { display:block; margin-top:5px; color:var(--muted); font-size:.68rem; }
+  .reply-form { display:flex; gap:10px; align-items:flex-end; padding:16px 20px; border-top:1px solid var(--border); }
+  .reply-form textarea { min-height:48px; max-height:150px; resize:vertical; }
+  .empty-chat { display:grid; flex:1; place-items:center; padding:40px; text-align:center; color:var(--muted); }
+  @media (max-width:760px) {
+    .inbox-layout { grid-template-columns:1fr; }
+    .conversation-list { border-right:0; border-bottom:1px solid var(--border); max-height:280px; }
+    .chat-messages { max-height:430px; }
+    .reply-form { flex-direction:column; align-items:stretch; }
+    .chat-bubble { max-width:88%; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex-between page-head">
+  <div>
+    <span class="eyebrow">Balasan pelanggan</span>
+    <h1>Inbox <span class="gradient-text">Telegram</span></h1>
+    <p>Balasan otomatis dikirim melalui akun yang menerima pesan.</p>
+  </div>
+  <button class="btn btn-outline" type="button" id="enable-inbox-notifications">Aktifkan notifikasi browser</button>
+</div>
+
+{% if error == 'invalid_message' %}
+<div class="alert alert-error">Pesan wajib diisi dan maksimal 4.096 karakter.</div>
+{% elif error == 'send_failed' %}
+<div class="alert alert-error">Balasan gagal dikirim. Pastikan akun penerima masih terhubung.</div>
+{% endif %}
+
+<div class="card inbox-layout">
+  <section class="conversation-list" aria-label="Daftar percakapan">
+    <div class="conversation-head"><strong>Percakapan</strong></div>
+    {% for item in conversations %}
+    <a class="conversation-item {% if selected and selected.account_id == item.account_id and selected.peer_id == item.peer_id %}active{% endif %}"
+       href="/inbox?account_id={{ item.account_id }}&peer_id={{ item.peer_id }}">
+      <div class="conversation-meta">
+        <strong>{{ item.peer_name }}</strong>
+        {% if item.unread %}<span class="conversation-unread">{{ item.unread }}</span>{% endif %}
+      </div>
+      <div class="small" style="color:#c4b5fd;">via {{ item.account_label }}</div>
+      <div class="conversation-preview muted small">{{ item.latest.body }}</div>
+    </a>
+    {% else %}
+    <div class="empty-chat">Belum ada balasan pelanggan.</div>
+    {% endfor %}
+  </section>
+
+  <section class="chat-panel" aria-label="Isi percakapan">
+    {% if selected %}
+    <div class="chat-head">
+      <strong>{{ selected.peer_name }}</strong>
+      {% if selected.peer_username %}<span class="muted small"> · @{{ selected.peer_username }}</span>{% endif %}
+      <div class="small" style="color:#c4b5fd;">Balas otomatis sebagai {{ selected.account_label }}</div>
+    </div>
+    <div class="chat-messages" id="chat-messages">
+      {% for message in messages %}
+      <div class="chat-row {{ message.direction }}">
+        <div class="chat-bubble">
+          {{ message.body }}
+          <span class="chat-time">{{ message.created_at.strftime('%d %b %Y %H:%M') }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <form class="reply-form" method="post" action="/inbox/reply">
+      <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
+      <input type="hidden" name="account_id" value="{{ selected.account_id }}">
+      <input type="hidden" name="peer_id" value="{{ selected.peer_id }}">
+      <textarea name="body" rows="2" maxlength="4096" placeholder="Tulis balasan..." aria-label="Balasan" required></textarea>
+      <button class="btn btn-primary" type="submit">Kirim sebagai {{ selected.account_label }}</button>
+    </form>
+    {% else %}
+    <div class="empty-chat">Pilih percakapan untuk membaca dan membalas.</div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const chat = document.getElementById('chat-messages');
+if (chat) chat.scrollTop = chat.scrollHeight;
+
+const notificationButton = document.getElementById('enable-inbox-notifications');
+if (!('Notification' in window) || Notification.permission === 'granted') {
+  notificationButton.hidden = true;
+} else {
+  notificationButton.addEventListener('click', async () => {
+    const permission = await Notification.requestPermission();
+    notificationButton.hidden = permission === 'granted';
+  });
+}
+</script>
+{% endblock %}

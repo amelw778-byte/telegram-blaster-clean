@@ -55,3 +55,35 @@ function previewImage(input) {
 }
 
 window.previewImage = previewImage;
+
+const inboxBadges = document.querySelectorAll('[data-inbox-count]');
+if (inboxBadges.length) {
+  async function refreshInboxCount() {
+    try {
+      const response = await fetch('/api/inbox/unread', { cache: 'no-store' });
+      if (!response.ok) return;
+      const data = await response.json();
+      inboxBadges.forEach((badge) => {
+        badge.textContent = data.unread_count > 99 ? '99+' : data.unread_count;
+        badge.hidden = !data.unread_count;
+      });
+
+      const previous = Number(sessionStorage.getItem('latestInboxMessageId') || 0);
+      if (
+        previous && data.latest_id > previous &&
+        'Notification' in window && Notification.permission === 'granted'
+      ) {
+        const notification = new Notification(`${data.peer_name} via ${data.account_label}`, {
+          body: data.latest_preview,
+        });
+        notification.onclick = () => { window.location.href = data.url; };
+      }
+      if (data.latest_id) sessionStorage.setItem('latestInboxMessageId', data.latest_id);
+    } catch (_error) {
+      // Poll berikutnya akan mencoba lagi.
+    }
+  }
+
+  refreshInboxCount();
+  setInterval(refreshInboxCount, 5000);
+}

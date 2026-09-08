@@ -31,6 +31,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
 html { color-scheme: dark; scroll-behavior: smooth; }
 body {
   min-height: 100vh;
@@ -157,6 +158,19 @@ button { cursor: pointer; }
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
   animation: nav-spin 3.2s linear infinite;
+}
+.nav-link .unread-dot {
+  min-width: 19px;
+  height: 19px;
+  display: inline-grid;
+  place-items: center;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 99px;
+  color: #fff;
+  background: var(--red);
+  font-size: 10px;
+  font-weight: 700;
 }
 @keyframes nav-spin { to { --nav-angle: 360deg; } }
 .menu-toggle {
