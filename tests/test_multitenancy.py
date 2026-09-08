@@ -394,6 +394,13 @@ class TenantIsolationTests(unittest.TestCase):
         started = {call.args[0] for call in starter.call_args_list}
         self.assertTrue({self.owner_account_id, self.other_account_id}.issubset(started))
 
+    def test_railway_ignores_local_inbox_account_filter(self):
+        with patch.dict(os.environ, {
+            "RAILWAY_ENVIRONMENT": "production",
+            "INBOX_ACCOUNT_ID": str(self.owner_account_id),
+        }):
+            self.assertTrue(inbox_manager.account_enabled(self.other_account_id))
+
     def test_inbox_status_only_reports_current_users_connected_accounts(self):
         with patch.object(
             inbox_manager,

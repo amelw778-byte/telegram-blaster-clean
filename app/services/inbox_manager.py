@@ -29,6 +29,8 @@ class InboxManager:
 
     @staticmethod
     def account_enabled(account_id: int) -> bool:
+        if os.getenv("RAILWAY_ENVIRONMENT", "").strip():
+            return True
         selected = os.getenv("INBOX_ACCOUNT_ID", "").strip()
         return not selected or selected == str(account_id)
 
