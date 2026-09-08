@@ -296,6 +296,61 @@ class TenantIsolationTests(unittest.TestCase):
             ).one()
             self.assertEqual(reply.body, "Baik, saya bantu.")
 
+    def test_inbox_routes_a_second_receiving_account(self):
+        with SessionLocal() as db:
+            account = TelegramAccount(
+                user_id=self.owner_id,
+                label="Second Account",
+                phone="+620000000003",
+                session_str="second-session",
+                api_id=3,
+                api_hash="second-hash",
+                is_active=1,
+            )
+            db.add(account)
+            db.commit()
+            db.refresh(account)
+            second_account_id = account.id
+
+        class FakeEvent:
+            is_private = True
+            raw_text = "Masuk lewat akun kedua"
+            message = SimpleNamespace(id=88, date=datetime.utcnow(), media=None)
+
+            async def get_input_chat(self):
+                return types.InputPeerUser(808, 8008)
+
+            async def get_chat(self):
+                return SimpleNamespace(first_name="Pelanggan Kedua", last_name=None, username=None)
+
+        asyncio.run(inbox_manager._store_incoming(second_account_id, FakeEvent()))
+        inbox = self.client.get(f"/inbox?account_id={second_account_id}&peer_id=808")
+        sender = AsyncMock(return_value=(89, datetime.utcnow()))
+        with patch("app.routers.inbox.inbox_manager.send_reply", sender):
+            response = self.client.post(
+                "/inbox/reply",
+                data={
+                    "csrf_token": _csrf_from(inbox.text),
+                    "account_id": second_account_id,
+                    "peer_id": 808,
+                    "body": "Balasan akun kedua",
+                },
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 303)
+        sender.assert_awaited_once_with(second_account_id, 808, 8008, "Balasan akun kedua")
+
+    def test_inbox_startup_includes_all_connected_accounts(self):
+        with (
+            patch.dict(os.environ, {"INBOX_LISTENERS_ENABLED": "true", "INBOX_ACCOUNT_ID": ""}),
+            patch.object(inbox_manager, "start") as starter,
+        ):
+            asyncio.run(inbox_manager.start_all())
+
+        started = {call.args[0] for call in starter.call_args_list}
+        self.assertTrue({self.owner_account_id, self.other_account_id}.issubset(started))
+
     def test_inbox_reply_cannot_use_another_users_account(self):
         dashboard = self.client.get("/dashboard")
         sender = AsyncMock()
