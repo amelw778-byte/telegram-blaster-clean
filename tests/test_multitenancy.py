@@ -125,7 +125,7 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Owner Account", response.text)
         self.assertIn(f'data-account-status="{self.owner_account_id}"', response.text)
-        self.assertIn("● Memeriksa…", response.text)
+        self.assertIn("data-account-status-label>Memeriksa…", response.text)
         self.assertIn('id="dashboard-account-search"', response.text)
         self.assertNotIn("Other Secret Account", response.text)
         self.assertNotIn("other secret job", response.text)
@@ -173,6 +173,9 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertIn('id="hide-accounts" hidden', response.text)
         self.assertIn('id="blast-account-search"', response.text)
         self.assertIn('class="flex pagination-controls"', response.text)
+        self.assertIn('class="card blast-account-card"', response.text)
+        self.assertIn("Konten & Target Pesan", response.text)
+        self.assertEqual(response.text.count('data-account-status="'), 13)
 
     def test_header_does_not_render_profile_summary(self):
         response = self.client.get("/dashboard")
@@ -259,6 +262,7 @@ class TenantIsolationTests(unittest.TestCase):
         response = self.client.get("/inbox")
         self.assertEqual(response.status_code, 200)
         self.assertIn("Owner Customer", response.text)
+        self.assertIn(f'data-account-status="{self.owner_account_id}"', response.text)
         self.assertNotIn("Other Secret Customer", response.text)
         self.assertNotIn("Other secret reply", response.text)
 

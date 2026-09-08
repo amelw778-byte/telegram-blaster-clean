@@ -69,12 +69,12 @@ if (inboxBadges.length) {
       });
 
       const connectedAccounts = new Set(data.connected_account_ids || []);
-      document.querySelectorAll('[data-account-status]').forEach((badge) => {
-        const connected = connectedAccounts.has(Number(badge.dataset.accountStatus));
-        badge.classList.toggle('badge-green', connected);
-        badge.classList.toggle('badge-red', !connected);
-        badge.classList.remove('badge-gray');
-        badge.textContent = connected ? '● Aktif' : '● Nonaktif';
+      document.querySelectorAll('[data-account-status]').forEach((indicator) => {
+        const connected = connectedAccounts.has(Number(indicator.dataset.accountStatus));
+        indicator.classList.toggle('is-online', connected);
+        indicator.classList.toggle('is-offline', !connected);
+        indicator.classList.remove('is-checking');
+        indicator.querySelector('[data-account-status-label]').textContent = connected ? 'Aktif' : 'Nonaktif';
       });
 
       const previous = Number(sessionStorage.getItem('latestInboxMessageId') || 0);

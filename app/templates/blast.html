@@ -12,9 +12,9 @@
 
 {% if error_message %}<div class="alert alert-error">{{ error_message }}</div>{% endif %}
 
-<div class="card">
-  <div class="card-title">Job Pengiriman Baru</div>
-  <form method="post" action="/send-blast" enctype="multipart/form-data" id="blast-form">
+<form method="post" action="/send-blast" enctype="multipart/form-data" id="blast-form">
+  <div class="card blast-account-card">
+    <div class="card-title">Job Pengiriman Baru</div>
     <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
     <div class="field">
       <div class="account-list-head">
@@ -25,7 +25,12 @@
         {% for acc in accounts %}
         <label class="account-choice" data-account-search="{{ acc.label or '' }} {{ acc.phone }}" {% if loop.index > 12 %}hidden{% endif %}>
           <input type="checkbox" name="account_ids" value="{{ acc.id }}" {% if acc.id in selected_ids %}checked{% endif %}>
-          <strong>{{ acc.label or acc.phone }}</strong>
+          <span class="account-choice-title">
+            <strong>{{ acc.label or acc.phone }}</strong>
+            <span class="account-presence is-checking" data-account-status="{{ acc.id }}" aria-live="polite">
+              <span class="live-mark"></span><span data-account-status-label>Memeriksa…</span>
+            </span>
+          </span>
           <div class="muted small" style="margin-top:4px;">{{ acc.phone }}</div>
           <div class="small" style="color:#c4b5fd;margin-top:7px;">Antrean akun #{{ acc.id }}</div>
         </label>
@@ -42,7 +47,10 @@
         Satu akun hanya menjalankan satu antrean pada satu waktu. Bila akun yang sama dipakai tab lain, job berikutnya otomatis menunggu—bukan menabrak proses yang sedang berjalan.
       </div>
     </div>
+  </div>
 
+  <div class="card">
+    <div class="card-title">Konten & Target Pesan</div>
     <div class="field">
       <label>Gambar <span class="label-note">opsional, maksimal 10 MB</span></label>
       <div class="upload-area" onclick="document.getElementById('img-input').click()">
@@ -99,8 +107,8 @@
     </label>
 
     <button type="submit" class="btn btn-primary btn-block" id="submit-button">Mulai Job dan Tampilkan Status</button>
-  </form>
-</div>
+  </div>
+</form>
 
 {% if job %}
 <div class="card" id="job-card" data-job-id="{{ job.id }}">
@@ -214,6 +222,7 @@ if (accountSearch) {
     if (showMoreAccounts) showMoreAccounts.hidden = allShown;
     if (showAllAccounts) showAllAccounts.hidden = allShown;
     if (hideAccounts) hideAccounts.hidden = !allShown;
+    return matches;
   }
 
   showMoreAccounts?.addEventListener('click', () => {
@@ -222,7 +231,8 @@ if (accountSearch) {
   });
   showAllAccounts?.addEventListener('click', () => {
     visibleAccounts = accountChoices.length;
-    refreshAccounts();
+    const matches = refreshAccounts();
+    requestAnimationFrame(() => matches.at(-1)?.scrollIntoView({block: 'end'}));
   });
   hideAccounts?.addEventListener('click', () => {
     visibleAccounts = 12;

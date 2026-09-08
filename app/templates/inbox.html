@@ -5,7 +5,6 @@
 <style>
   .inbox-page-head { margin-bottom:16px; }
   .inbox-page-head h1 { display:flex; align-items:center; gap:10px; }
-  .live-mark { width:8px; height:8px; border-radius:50%; background:#22c55e; box-shadow:0 0 12px rgba(34,197,94,.8); }
   .notification-button { padding:8px 13px; font-size:.76rem; }
 
   .inbox-shell {
@@ -37,8 +36,8 @@
   .chat-avatar { display:grid; width:42px; height:42px; place-items:center; flex:0 0 auto; border:1px solid rgba(129,140,248,.22); border-radius:50%; color:#e0e7ff; background:linear-gradient(145deg, rgba(99,102,241,.38), rgba(168,85,247,.22)); font-size:.86rem; font-weight:700; text-transform:uppercase; }
   .conversation-body { min-width:0; }
   .conversation-name { display:block; overflow:hidden; color:#f8fafc; font-size:.79rem; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
-  .account-route { display:flex; align-items:center; max-width:100%; margin-top:2px; color:#a5b4fc; font-size:.64rem; font-weight:600; }
-  .account-route::before { content:''; width:5px; height:5px; margin-right:5px; border-radius:50%; background:#818cf8; }
+  .account-route { display:flex; align-items:center; gap:7px; max-width:100%; margin-top:2px; color:#a5b4fc; font-size:.64rem; font-weight:600; }
+  .account-route .account-presence { font-size:.57rem; }
   .conversation-preview { display:block; margin-top:3px; overflow:hidden; color:var(--muted); font-size:.7rem; text-overflow:ellipsis; white-space:nowrap; }
   .conversation-side { display:flex; align-items:flex-end; flex-direction:column; gap:7px; }
   .conversation-time { color:#64748b; font-size:.61rem; white-space:nowrap; }
@@ -98,7 +97,7 @@
     .mobile-back { display:inline-flex; }
     .chat-head { min-height:64px; padding:10px 13px; }
     .chat-head .chat-avatar { width:38px; height:38px; }
-    .sender-chip span { display:none; }
+    .sender-chip .sender-prefix { display:none; }
     .chat-messages { padding:16px 12px; }
     .chat-bubble { max-width:78%; }
     .reply-wrap { padding:9px; }
@@ -145,7 +144,12 @@
         <span class="chat-avatar">{{ item.peer_name[:1] }}</span>
         <span class="conversation-body">
           <span class="conversation-name">{{ item.peer_name }}</span>
-          <span class="account-route">{{ item.account_label }}</span>
+          <span class="account-route">
+            <span>{{ item.account_label }}</span>
+            <span class="account-presence is-checking" data-account-status="{{ item.account_id }}" aria-live="polite">
+              <span class="live-mark"></span><span data-account-status-label>Memeriksa…</span>
+            </span>
+          </span>
           <span class="conversation-preview">{% if item.latest.direction == 'out' %}Anda: {% endif %}{{ item.latest.body }}</span>
         </span>
         <span class="conversation-side">
@@ -176,7 +180,10 @@
       </span>
       <span class="sender-chip" title="Akun yang otomatis dipakai untuk membalas">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
-        <span>Balas sebagai</span> {{ selected.account_label }}
+        <span class="sender-prefix">Balas sebagai</span> {{ selected.account_label }}
+        <span class="account-presence is-checking" data-account-status="{{ selected.account_id }}" aria-live="polite">
+          <span class="live-mark"></span><span data-account-status-label>Memeriksa…</span>
+        </span>
       </span>
     </header>
     <div class="chat-messages" id="chat-messages">
