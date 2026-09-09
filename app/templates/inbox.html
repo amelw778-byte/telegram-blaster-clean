@@ -23,7 +23,10 @@
   .conversation-list { display:flex; min-width:0; flex-direction:column; border-right:1px solid var(--border); background:rgba(255,255,255,.018); }
   .conversation-head { padding:18px 16px 13px; border-bottom:1px solid var(--border); }
   .conversation-title { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
-  .conversation-title strong { font-size:.92rem; }
+  .conversation-tabs { display:flex; gap:4px; padding:3px; border:1px solid rgba(255,255,255,.07); border-radius:10px; background:rgba(255,255,255,.025); }
+  .conversation-tab { padding:6px 9px; border-radius:7px; color:var(--muted); font-size:.68rem; font-weight:650; }
+  .conversation-tab:hover { color:#e2e8f0; background:rgba(255,255,255,.045); }
+  .conversation-tab.active { color:#eef2ff; background:rgba(99,102,241,.22); }
   .conversation-total { color:var(--muted); font-size:.69rem; font-weight:600; }
   .conversation-search { position:relative; }
   .conversation-search svg { position:absolute; top:50%; left:11px; width:15px; height:15px; color:var(--muted); transform:translateY(-50%); pointer-events:none; }
@@ -50,6 +53,10 @@
   .chat-identity { display:block; color:var(--muted); font-size:.67rem; }
   .sender-chip { display:flex; align-items:center; gap:7px; padding:7px 10px; border:1px solid rgba(99,102,241,.23); border-radius:9px; color:#c7d2fe; background:rgba(99,102,241,.08); font-size:.66rem; font-weight:600; white-space:nowrap; }
   .sender-chip svg { width:14px; height:14px; }
+  .chat-actions { display:flex; align-items:center; gap:6px; }
+  .chat-actions form { margin:0; }
+  .chat-action { min-height:34px; gap:6px; padding:7px 9px; border-radius:9px; font-size:.65rem; }
+  .chat-action svg { width:14px; height:14px; }
   .mobile-back { display:none; color:var(--muted); font-size:1.25rem; }
 
   .chat-messages {
@@ -79,6 +86,7 @@
   .send-button { min-width:88px; min-height:38px; gap:7px; padding:8px 14px; border-radius:11px; font-size:.74rem; }
   .send-button svg { width:15px; height:15px; }
   .composer-hint { margin:6px 5px 0; color:#64748b; font-size:.58rem; text-align:right; }
+  .archived-reply-note { padding:14px 18px; border-top:1px solid var(--border); color:var(--muted); background:rgba(3,0,20,.74); font-size:.7rem; text-align:center; }
 
   .empty-chat { display:grid; flex:1; min-height:180px; place-items:center; padding:36px; color:var(--muted); text-align:center; }
   .empty-icon { display:grid; width:56px; height:56px; margin:0 auto 12px; place-items:center; border:1px solid rgba(129,140,248,.2); border-radius:18px; color:#a5b4fc; background:rgba(99,102,241,.09); }
@@ -98,6 +106,8 @@
     .chat-head { min-height:64px; padding:10px 13px; }
     .chat-head .chat-avatar { width:38px; height:38px; }
     .sender-chip .sender-prefix { display:none; }
+    .chat-action-label { display:none; }
+    .chat-action { width:34px; min-width:34px; padding:0; }
     .chat-messages { padding:16px 12px; }
     .chat-bubble { max-width:78%; }
     .reply-wrap { padding:9px; }
@@ -122,13 +132,22 @@
 <div class="alert alert-error">Pesan wajib diisi dan maksimal 4.096 karakter.</div>
 {% elif error == 'send_failed' %}
 <div class="alert alert-error">Balasan gagal dikirim. Pastikan akun penerima masih terhubung.</div>
+{% elif notice == 'archived' %}
+<div class="alert alert-success">Percakapan berhasil diarsipkan.</div>
+{% elif notice == 'restored' %}
+<div class="alert alert-success">Percakapan berhasil dikembalikan ke Inbox.</div>
+{% elif notice == 'deleted' %}
+<div class="alert alert-success">Percakapan berhasil dihapus permanen.</div>
 {% endif %}
 
 <div class="card inbox-shell {% if selected %}has-selection{% endif %}">
   <section class="conversation-list" aria-label="Daftar percakapan">
     <div class="conversation-head">
       <div class="conversation-title">
-        <strong>Pesan</strong>
+        <nav class="conversation-tabs" aria-label="Filter percakapan">
+          <a class="conversation-tab {% if not archived %}active{% endif %}" href="/inbox" {% if not archived %}aria-current="page"{% endif %}>Inbox</a>
+          <a class="conversation-tab {% if archived %}active{% endif %}" href="/inbox?archived=true" {% if archived %}aria-current="page"{% endif %}>Diarsipkan</a>
+        </nav>
         <span class="conversation-total">{{ conversations|length }} percakapan</span>
       </div>
       <div class="conversation-search">
@@ -140,7 +159,7 @@
       {% for item in conversations %}
       <a class="conversation-item {% if selected and selected.account_id == item.account_id and selected.peer_id == item.peer_id %}active{% endif %}"
          data-search="{{ item.peer_name }} {{ item.peer_username or '' }} {{ item.account_label }}"
-         href="/inbox?account_id={{ item.account_id }}&peer_id={{ item.peer_id }}">
+         href="/inbox?account_id={{ item.account_id }}&peer_id={{ item.peer_id }}{% if archived %}&archived=true{% endif %}">
         <span class="chat-avatar">{{ item.peer_name[:1] }}</span>
         <span class="conversation-body">
           <span class="conversation-name">{{ item.peer_name }}</span>
@@ -161,8 +180,8 @@
       <div class="empty-chat">
         <div>
           <span class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path></svg></span>
-          <strong>Belum ada balasan</strong>
-          <p>Pesan pelanggan akan muncul otomatis di sini.</p>
+          <strong>{% if archived %}Belum ada arsip{% else %}Belum ada balasan{% endif %}</strong>
+          <p>{% if archived %}Percakapan yang diarsipkan akan tersimpan di sini.{% else %}Pesan pelanggan akan muncul otomatis di sini.{% endif %}</p>
         </div>
       </div>
       {% endfor %}
@@ -172,7 +191,7 @@
   <section class="chat-panel" aria-label="Isi percakapan">
     {% if selected %}
     <header class="chat-head">
-      <a class="mobile-back" href="/inbox" aria-label="Kembali ke daftar percakapan">‹</a>
+      <a class="mobile-back" href="/inbox{% if archived %}?archived=true{% endif %}" aria-label="Kembali ke daftar percakapan">‹</a>
       <span class="chat-avatar">{{ selected.peer_name[:1] }}</span>
       <span class="chat-head-main">
         <span class="chat-person">{{ selected.peer_name }}</span>
@@ -185,6 +204,28 @@
           <span class="live-mark"></span><span data-account-status-label>Memeriksa…</span>
         </span>
       </span>
+      <div class="chat-actions">
+        <form method="post" action="/inbox/conversation/{% if archived %}restore{% else %}archive{% endif %}">
+          <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
+          <input type="hidden" name="account_id" value="{{ selected.account_id }}">
+          <input type="hidden" name="peer_id" value="{{ selected.peer_id }}">
+          <input type="hidden" name="archived" value="{{ 'true' if archived else 'false' }}">
+          <button class="btn btn-outline chat-action" type="submit" title="{% if archived %}Kembalikan ke Inbox{% else %}Arsipkan percakapan{% endif %}" aria-label="{% if archived %}Kembalikan ke Inbox{% else %}Arsipkan percakapan{% endif %}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16v13H4zM3 3h18v4H3z"></path><path d="M9 11h6"></path></svg>
+            <span class="chat-action-label">{% if archived %}Pulihkan{% else %}Arsipkan{% endif %}</span>
+          </button>
+        </form>
+        <form method="post" action="/inbox/conversation/delete" onsubmit="return confirm('Hapus seluruh percakapan ini secara permanen?')">
+          <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
+          <input type="hidden" name="account_id" value="{{ selected.account_id }}">
+          <input type="hidden" name="peer_id" value="{{ selected.peer_id }}">
+          <input type="hidden" name="archived" value="{{ 'true' if archived else 'false' }}">
+          <button class="btn btn-danger chat-action" type="submit" title="Hapus percakapan permanen" aria-label="Hapus percakapan permanen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"></path><path d="M10 10v6M14 10v6"></path></svg>
+            <span class="chat-action-label">Hapus</span>
+          </button>
+        </form>
+      </div>
     </header>
     <div class="chat-messages" id="chat-messages">
       {% for message in messages %}
@@ -199,6 +240,7 @@
       </div>
       {% endfor %}
     </div>
+    {% if not archived %}
     <div class="reply-wrap">
       <form class="reply-form" method="post" action="/inbox/reply" id="reply-form">
         <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
@@ -212,6 +254,9 @@
       </form>
       <div class="composer-hint">Enter untuk kirim · Shift + Enter untuk baris baru</div>
     </div>
+    {% else %}
+    <div class="archived-reply-note">Pulihkan percakapan untuk membalas pelanggan.</div>
+    {% endif %}
     {% else %}
     <div class="empty-chat">
       <div>

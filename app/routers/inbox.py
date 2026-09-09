@@ -23,6 +23,7 @@ def inbox_page(
     request: Request,
     account_id: int | None = None,
     peer_id: int | None = None,
+    archived: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -30,7 +31,10 @@ def inbox_page(
     recent = (
         db.query(InboxMessage)
         .options(joinedload(InboxMessage.account))
-        .filter(InboxMessage.user_id == current_user.id)
+        .filter(
+            InboxMessage.user_id == current_user.id,
+            InboxMessage.is_archived.is_(archived),
+        )
         .order_by(InboxMessage.created_at.desc(), InboxMessage.id.desc())
         .limit(1000)
         .all()
@@ -61,6 +65,7 @@ def inbox_page(
                 InboxMessage.user_id == current_user.id,
                 InboxMessage.account_id == account_id,
                 InboxMessage.peer_id == peer_id,
+                InboxMessage.is_archived.is_(archived),
             )
             .order_by(InboxMessage.created_at.desc(), InboxMessage.id.desc())
             .first()
@@ -73,6 +78,7 @@ def inbox_page(
                 InboxMessage.user_id == current_user.id,
                 InboxMessage.account_id == account_id,
                 InboxMessage.peer_id == peer_id,
+                InboxMessage.is_archived.is_(archived),
             )
             .order_by(InboxMessage.created_at.desc(), InboxMessage.id.desc())
             .limit(200)
@@ -101,8 +107,48 @@ def inbox_page(
         "conversations": list(conversations.values()),
         "selected": selected,
         "messages": messages,
+        "archived": archived,
         "error": request.query_params.get("error"),
+        "notice": request.query_params.get("notice"),
     })
+
+
+@router.post("/inbox/conversation/{action}")
+def manage_conversation(
+    action: str,
+    account_id: int = Form(...),
+    peer_id: int = Form(...),
+    archived: bool = Form(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
+):
+    if action not in {"archive", "restore", "delete"}:
+        raise HTTPException(status_code=404, detail="Aksi tidak ditemukan")
+
+    conversation = db.query(InboxMessage).filter(
+        InboxMessage.user_id == current_user.id,
+        InboxMessage.account_id == account_id,
+        InboxMessage.peer_id == peer_id,
+    )
+    if not conversation.filter(InboxMessage.is_archived.is_(archived)).first():
+        raise HTTPException(status_code=404, detail="Percakapan tidak ditemukan")
+
+    if action == "delete":
+        conversation.delete(synchronize_session=False)
+    else:
+        conversation.update(
+            {
+                InboxMessage.is_archived: action == "archive",
+                InboxMessage.is_read: True,
+            },
+            synchronize_session=False,
+        )
+    db.commit()
+
+    destination = "/inbox?archived=true" if archived else "/inbox"
+    separator = "&" if "?" in destination else "?"
+    return RedirectResponse(f"{destination}{separator}notice={action}d", status_code=303)
 
 
 @router.post("/inbox/reply")
@@ -129,6 +175,7 @@ async def reply(
             InboxMessage.user_id == current_user.id,
             InboxMessage.account_id == account_id,
             InboxMessage.peer_id == peer_id,
+            InboxMessage.is_archived.is_(False),
         )
         .order_by(InboxMessage.created_at.desc(), InboxMessage.id.desc())
         .first()
@@ -182,6 +229,7 @@ def unread(
         InboxMessage.user_id == current_user.id,
         InboxMessage.direction == "in",
         InboxMessage.is_read.is_(False),
+        InboxMessage.is_archived.is_(False),
     )
     count = query.count()
     latest = query.options(joinedload(InboxMessage.account)).order_by(

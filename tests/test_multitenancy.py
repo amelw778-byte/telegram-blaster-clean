@@ -266,7 +266,96 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertNotIn("Other Secret Customer", response.text)
         self.assertNotIn("Other secret reply", response.text)
 
+    def test_inbox_conversation_can_be_archived_restored_and_deleted(self):
+        peer_id = 606
+        with SessionLocal() as db:
+            db.add_all([
+                InboxMessage(
+                    user_id=self.owner_id,
+                    account_id=self.owner_account_id,
+                    peer_id=peer_id,
+                    peer_access_hash=6006,
+                    peer_name="Archived Customer",
+                    telegram_message_id=1,
+                    direction="in",
+                    body="Archive this",
+                ),
+                InboxMessage(
+                    user_id=self.other_id,
+                    account_id=self.other_account_id,
+                    peer_id=peer_id,
+                    peer_access_hash=6007,
+                    peer_name="Other Archived Customer",
+                    telegram_message_id=1,
+                    direction="in",
+                    body="Keep this",
+                ),
+            ])
+            db.commit()
+
+        inbox = self.client.get(f"/inbox?account_id={self.owner_account_id}&peer_id={peer_id}")
+        form = {
+            "csrf_token": _csrf_from(inbox.text),
+            "account_id": self.owner_account_id,
+            "peer_id": peer_id,
+            "archived": "false",
+        }
+        forbidden = self.client.post(
+            "/inbox/conversation/archive",
+            data={**form, "account_id": self.other_account_id},
+        )
+        self.assertEqual(forbidden.status_code, 404)
+        archived = self.client.post(
+            "/inbox/conversation/archive", data=form, follow_redirects=False
+        )
+        self.assertEqual(archived.status_code, 303)
+        self.assertNotIn("Archived Customer", self.client.get("/inbox").text)
+        archive_page = self.client.get("/inbox?archived=true")
+        self.assertIn("Archived Customer", archive_page.text)
+        self.assertNotIn("Other Archived Customer", archive_page.text)
+
+        form["archived"] = "true"
+        restored = self.client.post(
+            "/inbox/conversation/restore", data=form, follow_redirects=False
+        )
+        self.assertEqual(restored.status_code, 303)
+        self.assertIn("Archived Customer", self.client.get("/inbox").text)
+
+        form["archived"] = "false"
+        deleted = self.client.post(
+            "/inbox/conversation/delete", data=form, follow_redirects=False
+        )
+        self.assertEqual(deleted.status_code, 303)
+        with SessionLocal() as db:
+            self.assertEqual(db.query(InboxMessage).filter(
+                InboxMessage.user_id == self.owner_id,
+                InboxMessage.peer_id == peer_id,
+            ).count(), 0)
+            self.assertEqual(db.query(InboxMessage).filter(
+                InboxMessage.user_id == self.other_id,
+                InboxMessage.peer_id == peer_id,
+            ).count(), 1)
+            db.query(InboxMessage).filter(
+                InboxMessage.user_id == self.other_id,
+                InboxMessage.peer_id == peer_id,
+            ).delete(synchronize_session=False)
+            db.commit()
+
     def test_inbox_listener_stores_the_receiving_account(self):
+        with SessionLocal() as db:
+            db.add(InboxMessage(
+                user_id=self.owner_id,
+                account_id=self.owner_account_id,
+                peer_id=707,
+                peer_access_hash=7007,
+                peer_name="Pelanggan Lama",
+                telegram_message_id=76,
+                direction="in",
+                body="Pesan terarsip",
+                is_archived=True,
+            ))
+            db.commit()
+
         class FakeEvent:
             is_private = True
             raw_text = "Balasan masuk untuk Meysa"
@@ -284,12 +373,13 @@ class TenantIsolationTests(unittest.TestCase):
 
         asyncio.run(inbox_manager._store_incoming(self.owner_account_id, FakeEvent()))
         with SessionLocal() as db:
-            message = db.query(InboxMessage).filter(
+            messages = db.query(InboxMessage).filter(
                 InboxMessage.account_id == self.owner_account_id,
                 InboxMessage.peer_id == 707,
-            ).one()
-            self.assertEqual(message.user_id, self.owner_id)
-            self.assertEqual(message.body, "Balasan masuk untuk Meysa")
+            ).all()
+            self.assertEqual(len(messages), 2)
+            self.assertTrue(all(not message.is_archived for message in messages))
+            self.assertIn("Balasan masuk untuk Meysa", {message.body for message in messages})
 
     def test_inbox_reply_automatically_uses_receiving_account(self):
         peer_id = 303

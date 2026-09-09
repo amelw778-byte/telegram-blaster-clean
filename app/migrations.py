@@ -106,6 +106,18 @@ def _upgrade_sqlite_schema() -> None:
                 )
 
 
+def _upgrade_inbox_schema() -> None:
+    if "inbox_messages" not in inspect(engine).get_table_names():
+        return
+    columns = {column["name"] for column in inspect(engine).get_columns("inbox_messages")}
+    if "is_archived" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE inbox_messages ADD COLUMN "
+                "is_archived BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+
+
 def _copy_sqlite_to_postgres(source_path: Path) -> bool:
     """Copy a legacy SQLite database into an empty PostgreSQL schema once."""
     if not source_path.exists() or IS_SQLITE:
@@ -215,4 +227,5 @@ def initialize_database() -> None:
         _encrypt_sqlite_telegram_secrets(DB_PATH)
     else:
         _copy_sqlite_to_postgres(DB_PATH)
+    _upgrade_inbox_schema()
     _bootstrap_and_claim_legacy_rows()

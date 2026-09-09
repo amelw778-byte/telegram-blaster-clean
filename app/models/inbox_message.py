@@ -51,6 +51,7 @@ class InboxMessage(Base):
     direction = Column(String(8), nullable=False)
     body = Column(Text, nullable=False)
     is_read = Column(Boolean, nullable=False, default=False)
+    is_archived = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
     account = relationship("TelegramAccount")

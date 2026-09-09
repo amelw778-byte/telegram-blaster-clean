@@ -152,6 +152,13 @@ class InboxManager:
                 created_at=created_at,
             ))
             try:
+                db.flush()
+                db.query(InboxMessage).filter(
+                    InboxMessage.user_id == account.user_id,
+                    InboxMessage.account_id == account.id,
+                    InboxMessage.peer_id == input_peer.user_id,
+                    InboxMessage.is_archived.is_(True),
+                ).update({InboxMessage.is_archived: False}, synchronize_session=False)
                 db.commit()
             except IntegrityError:
                 db.rollback()
