@@ -33,7 +33,7 @@ from telethon import types  # noqa: E402
 from app.auth import hash_password, upsert_google_user, verify_password  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import BlastJob, DeviceSession, InboxMessage, TelegramAccount, User  # noqa: E402
+from app.models import BlastJob, DeviceSession, InboxConversation, InboxMessage, TelegramAccount, User  # noqa: E402
 from app.security import ENCRYPTED_PREFIX, decrypt_sensitive, encrypt_sensitive  # noqa: E402
 from app.routers import scraper  # noqa: E402
 from app.routers.telegram import _normalize_delay_range  # noqa: E402
@@ -234,6 +234,22 @@ class TenantIsolationTests(unittest.TestCase):
     def test_inbox_only_renders_current_users_messages(self):
         with SessionLocal() as db:
             db.add_all([
+                InboxConversation(
+                    user_id=self.owner_id,
+                    account_id=self.owner_account_id,
+                    peer_id=101,
+                    peer_access_hash=1001,
+                    peer_name="Owner Customer",
+                    peer_username="owner_customer",
+                ),
+                InboxConversation(
+                    user_id=self.other_id,
+                    account_id=self.other_account_id,
+                    peer_id=202,
+                    peer_access_hash=2002,
+                    peer_name="Other Secret Customer",
+                    peer_username="other_secret",
+                ),
                 InboxMessage(
                     user_id=self.owner_id,
                     account_id=self.owner_account_id,
@@ -270,6 +286,20 @@ class TenantIsolationTests(unittest.TestCase):
         peer_id = 606
         with SessionLocal() as db:
             db.add_all([
+                InboxConversation(
+                    user_id=self.owner_id,
+                    account_id=self.owner_account_id,
+                    peer_id=peer_id,
+                    peer_access_hash=6006,
+                    peer_name="Archived Customer",
+                ),
+                InboxConversation(
+                    user_id=self.other_id,
+                    account_id=self.other_account_id,
+                    peer_id=peer_id,
+                    peer_access_hash=6007,
+                    peer_name="Other Archived Customer",
+                ),
                 InboxMessage(
                     user_id=self.owner_id,
                     account_id=self.owner_account_id,
@@ -339,21 +369,150 @@ class TenantIsolationTests(unittest.TestCase):
                 InboxMessage.user_id == self.other_id,
                 InboxMessage.peer_id == peer_id,
             ).delete(synchronize_session=False)
+            db.query(InboxConversation).filter(
+                InboxConversation.user_id == self.other_id,
+                InboxConversation.peer_id == peer_id,
+            ).delete(synchronize_session=False)
+            db.commit()
+
+    def test_whatsapp_style_inbox_actions_and_bulk_flow(self):
+        peer_id = 909
+        bulk_peer_id = 910
+        with SessionLocal() as db:
+            for current_peer, name in ((peer_id, "Action Customer"), (bulk_peer_id, "Bulk Customer")):
+                db.add(InboxConversation(
+                    user_id=self.owner_id,
+                    account_id=self.owner_account_id,
+                    peer_id=current_peer,
+                    peer_access_hash=current_peer * 10,
+                    peer_name=name,
+                ))
+                db.add(InboxMessage(
+                    user_id=self.owner_id,
+                    account_id=self.owner_account_id,
+                    peer_id=current_peer,
+                    peer_access_hash=current_peer * 10,
+                    peer_name=name,
+                    telegram_message_id=1,
+                    direction="in",
+                    body=f"Message for {name}",
+                ))
+            db.commit()
+
+        inbox = self.client.get(f"/inbox?account_id={self.owner_account_id}&peer_id={peer_id}")
+        self.assertEqual(inbox.status_code, 200)
+        for text in (
+            "Pesan berbintang", "Pilih obrolan", "Tandai semua sudah dibaca",
+            "Bisukan notifikasi", "Sematkan chat", "Tambah ke favorit",
+            "Tambahkan ke daftar", "Blokir kontak", "Bersihkan obrolan",
+            "Hapus obrolan", 'id="attachment-button"', 'id="emoji-button"',
+            'id="record-button"',
+        ):
+            self.assertIn(text, inbox.text)
+        self.assertNotIn("Grup baru", inbox.text)
+        csrf = _csrf_from(inbox.text)
+        form = {
+            "csrf_token": csrf,
+            "account_id": self.owner_account_id,
+            "peer_id": peer_id,
+            "view": "all",
+        }
+
+        for action in ("mute", "pin", "favorite"):
+            response = self.client.post(
+                f"/inbox/conversation/{action}", data=form, follow_redirects=False
+            )
+            self.assertEqual(response.status_code, 303)
+        self.client.post("/inbox/conversation/list", data={**form, "list_label": "Prioritas"})
+        unread = self.client.post(
+            "/inbox/conversation/unread", data=form, follow_redirects=False
+        )
+        self.assertNotIn("account_id", unread.headers["location"])
+
+        with patch("app.routers.inbox.inbox_manager.set_blocked", AsyncMock()) as blocker:
+            response = self.client.post("/inbox/conversation/block", data=form)
+        self.assertEqual(response.status_code, 200)
+        blocker.assert_awaited_once()
+
+        selected = self.client.get(
+            f"/inbox?account_id={self.owner_account_id}&peer_id={peer_id}"
+        )
+        message_id = re.search(r'/inbox/message/(\d+)/star', selected.text).group(1)
+        starred = self.client.post(
+            f"/inbox/message/{message_id}/star", data=form, follow_redirects=False
+        )
+        self.assertEqual(starred.status_code, 303)
+        self.assertIn("Action Customer", self.client.get("/inbox?view=starred").text)
+
+        clear = self.client.post(
+            "/inbox/conversation/clear", data=form, follow_redirects=False
+        )
+        self.assertEqual(clear.status_code, 303)
+        with SessionLocal() as db:
+            state = db.query(InboxConversation).filter(
+                InboxConversation.user_id == self.owner_id,
+                InboxConversation.peer_id == peer_id,
+            ).one()
+            self.assertTrue(state.is_muted and state.is_pinned and state.is_favorite and state.is_blocked)
+            self.assertEqual(state.list_label, "Prioritas")
+            self.assertEqual(db.query(InboxMessage).filter(
+                InboxMessage.user_id == self.owner_id,
+                InboxMessage.peer_id == peer_id,
+            ).count(), 0)
+
+        bulk_form = {
+            "csrf_token": csrf,
+            "view": "all",
+            "conversation_keys": [
+                f"{self.owner_account_id}:{bulk_peer_id}",
+                f"{self.other_account_id}:202",
+            ],
+        }
+        for action in ("read", "mute", "archive", "delete"):
+            response = self.client.post(
+                "/inbox/conversations/bulk",
+                data={**bulk_form, "action": action},
+                follow_redirects=False,
+            )
+            self.assertEqual(response.status_code, 303)
+        with SessionLocal() as db:
+            self.assertIsNone(db.query(InboxConversation).filter(
+                InboxConversation.user_id == self.owner_id,
+                InboxConversation.peer_id == bulk_peer_id,
+            ).first())
+            self.assertIsNotNone(db.query(InboxConversation).filter(
+                InboxConversation.user_id == self.other_id,
+                InboxConversation.peer_id == 202,
+            ).first())
+            db.query(InboxConversation).filter(
+                InboxConversation.user_id == self.owner_id,
+                InboxConversation.peer_id == peer_id,
+            ).delete(synchronize_session=False)
             db.commit()
 
     def test_inbox_listener_stores_the_receiving_account(self):
         with SessionLocal() as db:
-            db.add(InboxMessage(
-                user_id=self.owner_id,
-                account_id=self.owner_account_id,
-                peer_id=707,
-                peer_access_hash=7007,
-                peer_name="Pelanggan Lama",
-                telegram_message_id=76,
-                direction="in",
-                body="Pesan terarsip",
-                is_archived=True,
-            ))
+            db.add_all([
+                InboxConversation(
+                    user_id=self.owner_id,
+                    account_id=self.owner_account_id,
+                    peer_id=707,
+                    peer_access_hash=7007,
+                    peer_name="Pelanggan Lama",
+                    is_archived=True,
+                ),
+                InboxMessage(
+                    user_id=self.owner_id,
+                    account_id=self.owner_account_id,
+                    peer_id=707,
+                    peer_access_hash=7007,
+                    peer_name="Pelanggan Lama",
+                    telegram_message_id=76,
+                    direction="in",
+                    body="Pesan terarsip",
+                    is_archived=True,
+                ),
+            ])
             db.commit()
 
         class FakeEvent:
@@ -380,22 +539,36 @@ class TenantIsolationTests(unittest.TestCase):
             self.assertEqual(len(messages), 2)
             self.assertTrue(all(not message.is_archived for message in messages))
             self.assertIn("Balasan masuk untuk Meysa", {message.body for message in messages})
+            self.assertFalse(db.query(InboxConversation).filter(
+                InboxConversation.account_id == self.owner_account_id,
+                InboxConversation.peer_id == 707,
+            ).one().is_archived)
 
     def test_inbox_reply_automatically_uses_receiving_account(self):
         peer_id = 303
         access_hash = 3003
         with SessionLocal() as db:
-            db.add(InboxMessage(
-                user_id=self.owner_id,
-                account_id=self.owner_account_id,
-                peer_id=peer_id,
-                peer_access_hash=access_hash,
-                peer_name="Meysa Customer",
-                peer_username="meysa_customer",
-                telegram_message_id=1,
-                direction="in",
-                body="Saya tertarik",
-            ))
+            db.add_all([
+                InboxConversation(
+                    user_id=self.owner_id,
+                    account_id=self.owner_account_id,
+                    peer_id=peer_id,
+                    peer_access_hash=access_hash,
+                    peer_name="Meysa Customer",
+                    peer_username="meysa_customer",
+                ),
+                InboxMessage(
+                    user_id=self.owner_id,
+                    account_id=self.owner_account_id,
+                    peer_id=peer_id,
+                    peer_access_hash=access_hash,
+                    peer_name="Meysa Customer",
+                    peer_username="meysa_customer",
+                    telegram_message_id=1,
+                    direction="in",
+                    body="Saya tertarik",
+                ),
+            ])
             db.commit()
 
         inbox = self.client.get(
@@ -428,6 +601,35 @@ class TenantIsolationTests(unittest.TestCase):
                 InboxMessage.direction == "out",
             ).one()
             self.assertEqual(reply.body, "Baik, saya bantu.")
+
+        voice_sender = AsyncMock(return_value=(3, datetime.utcnow()))
+        with patch("app.routers.inbox.inbox_manager.send_reply", voice_sender):
+            response = self.client.post(
+                "/inbox/reply",
+                data={
+                    "csrf_token": _csrf_from(inbox.text),
+                    "account_id": self.owner_account_id,
+                    "peer_id": peer_id,
+                    "body": "",
+                    "voice_note": "true",
+                },
+                files={"attachment": ("pesan.webm", b"voice-data", "audio/webm")},
+                follow_redirects=False,
+            )
+        self.assertEqual(response.status_code, 303)
+        self.assertTrue(voice_sender.await_args.kwargs["voice_note"])
+        media_path = Path(voice_sender.await_args.kwargs["file_path"])
+        self.assertTrue(media_path.is_file())
+        with SessionLocal() as db:
+            voice = db.query(InboxMessage).filter(
+                InboxMessage.account_id == self.owner_account_id,
+                InboxMessage.peer_id == peer_id,
+                InboxMessage.telegram_message_id == 3,
+            ).one()
+            self.assertEqual(voice.media_type, "audio/webm")
+            db.delete(voice)
+            db.commit()
+        media_path.unlink(missing_ok=True)
 
     def test_inbox_routes_a_second_receiving_account(self):
         with SessionLocal() as db:

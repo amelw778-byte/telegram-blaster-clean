@@ -5,7 +5,7 @@ from pathlib import Path
 from sqlalchemy import Boolean, inspect, select, text
 
 from app.database import Base, DB_PATH, IS_SQLITE, SessionLocal, engine
-from app.models import User
+from app.models import InboxConversation, InboxMessage, User
 from app.security import encrypt_sensitive, encryption_configured
 
 
@@ -110,12 +110,47 @@ def _upgrade_inbox_schema() -> None:
     if "inbox_messages" not in inspect(engine).get_table_names():
         return
     columns = {column["name"] for column in inspect(engine).get_columns("inbox_messages")}
-    if "is_archived" not in columns:
-        with engine.begin() as connection:
+    additions = {
+        "is_archived": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "is_starred": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "media_path": "VARCHAR(500)",
+        "media_name": "VARCHAR(255)",
+        "media_type": "VARCHAR(100)",
+    }
+    with engine.begin() as connection:
+        for name, definition in additions.items():
+            if name in columns:
+                continue
             connection.execute(text(
-                "ALTER TABLE inbox_messages ADD COLUMN "
-                "is_archived BOOLEAN NOT NULL DEFAULT FALSE"
+                f"ALTER TABLE inbox_messages ADD COLUMN {name} {definition}"
             ))
+
+
+def _backfill_inbox_conversations() -> None:
+    with SessionLocal() as db:
+        existing = {
+            (row.account_id, row.peer_id)
+            for row in db.query(InboxConversation.account_id, InboxConversation.peer_id)
+        }
+        for message in db.query(InboxMessage).order_by(
+            InboxMessage.created_at.desc(), InboxMessage.id.desc()
+        ):
+            key = (message.account_id, message.peer_id)
+            if key in existing:
+                continue
+            db.add(InboxConversation(
+                user_id=message.user_id,
+                account_id=message.account_id,
+                peer_id=message.peer_id,
+                peer_access_hash=message.peer_access_hash,
+                peer_name=message.peer_name,
+                peer_username=message.peer_username,
+                is_archived=message.is_archived,
+                created_at=message.created_at,
+                updated_at=message.created_at,
+            ))
+            existing.add(key)
+        db.commit()
 
 
 def _copy_sqlite_to_postgres(source_path: Path) -> bool:
@@ -228,4 +263,5 @@ def initialize_database() -> None:
     else:
         _copy_sqlite_to_postgres(DB_PATH)
     _upgrade_inbox_schema()
+    _backfill_inbox_conversations()
     _bootstrap_and_claim_legacy_rows()

@@ -24,7 +24,7 @@ from sqlalchemy import text
 from app.auth import AuthenticationRequired, session_secret_for_middleware
 from app.database import SessionLocal, engine
 from app.migrations import initialize_database
-from app.models import BlastJob, BlastRecipient, DeviceSession, InboxMessage, TelegramAccount, User  # noqa: F401
+from app.models import BlastJob, BlastRecipient, DeviceSession, InboxConversation, InboxMessage, TelegramAccount, User  # noqa: F401
 from app.services.blast_manager import blast_manager
 from app.services.inbox_manager import inbox_manager
 

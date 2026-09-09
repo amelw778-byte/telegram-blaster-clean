@@ -52,6 +52,10 @@ class InboxMessage(Base):
     body = Column(Text, nullable=False)
     is_read = Column(Boolean, nullable=False, default=False)
     is_archived = Column(Boolean, nullable=False, default=False)
+    is_starred = Column(Boolean, nullable=False, default=False)
+    media_path = Column(String(500), nullable=True)
+    media_name = Column(String(255), nullable=True)
+    media_type = Column(String(100), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
     account = relationship("TelegramAccount")
