@@ -303,6 +303,8 @@ code { color: #c4b5fd; font-family: 'SFMono-Regular', Consolas, monospace; font-
 .blast-account-card .card-title { margin-bottom: 8px; }
 .blast-account-card .field { margin-bottom: 0; }
 .blast-account-card .account-list-head { align-items: start; }
+.use-all-accounts-row { display: flex; align-items: center; gap: 10px; margin: -5px 0 14px; }
+.use-all-accounts-note { color: var(--muted); font-size: .68rem; }
 .account-choice { position: relative; margin: 0; padding: 16px; border: 1px solid rgba(255, 255, 255, .09); border-radius: 14px; cursor: pointer; background: rgba(255, 255, 255, .03); text-transform: none; transition: border-color .2s ease, background .2s ease, transform .2s ease; }
 .account-choice-title { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding-right: 26px; }
 .account-choice:hover { transform: translateY(-1px); border-color: rgba(99, 102, 241, .42); background: rgba(99, 102, 241, .07); }

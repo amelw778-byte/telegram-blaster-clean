@@ -33,10 +33,11 @@ from telethon import types  # noqa: E402
 from app.auth import hash_password, upsert_google_user, verify_password  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import BlastJob, DeviceSession, InboxConversation, InboxMessage, TelegramAccount, User  # noqa: E402
+from app.models import BlastJob, BlastRecipient, DeviceSession, InboxConversation, InboxMessage, TelegramAccount, User  # noqa: E402
 from app.security import ENCRYPTED_PREFIX, decrypt_sensitive, encrypt_sensitive  # noqa: E402
 from app.routers import scraper  # noqa: E402
 from app.routers.telegram import _normalize_delay_range  # noqa: E402
+from app.services.blast_manager import blast_manager  # noqa: E402
 from app.services.inbox_manager import inbox_manager  # noqa: E402
 
 
@@ -176,6 +177,79 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertIn('class="card blast-account-card"', response.text)
         self.assertIn("Konten & Target Pesan", response.text)
         self.assertEqual(response.text.count('data-account-status="'), 13)
+        self.assertIn('id="use-all-accounts"', response.text)
+        self.assertIn("connected_account_ids", response.text)
+        self.assertLess(response.text.index("Gunakan semua akun"), response.text.index('id="blast-account-grid"'))
+
+    def test_blast_failover_moves_paused_targets_to_the_next_account(self):
+        with SessionLocal() as db:
+            backup_account = TelegramAccount(
+                user_id=self.owner_id,
+                label="Failover Account",
+                phone="+629988776655",
+                session_str="failover-session",
+                api_id=99,
+                api_hash="failover-hash",
+                is_active=1,
+            )
+            db.add(backup_account)
+            db.flush()
+            job = BlastJob(
+                user_id=self.owner_id,
+                status="queued",
+                message="failover test",
+                accounts_json=json.dumps([self.owner_account_id, backup_account.id]),
+                consent_confirmed=True,
+                total_count=4,
+                pending_count=4,
+            )
+            db.add(job)
+            db.flush()
+            recipients = [
+                BlastRecipient(
+                    job_id=job.id,
+                    account_id=(self.owner_account_id if index % 2 == 0 else backup_account.id),
+                    username=f"failover_target_{index}",
+                    normalized_username=f"failover_target_{index}",
+                    sort_order=index,
+                )
+                for index in range(4)
+            ]
+            db.add_all(recipients)
+            db.commit()
+            job_id = job.id
+            backup_account_id = backup_account.id
+
+        async def run_queue(_job_id, account_id, recipient_ids):
+            with SessionLocal() as db:
+                rows = db.query(BlastRecipient).filter(BlastRecipient.id.in_(recipient_ids)).all()
+                if account_id == self.owner_account_id:
+                    for row in rows:
+                        row.status = "paused"
+                        row.error = "FloodWait — dialihkan"
+                    blast_manager._refresh_counts(db, _job_id)
+                    return "limited"
+                for row in rows:
+                    row.status = "sent"
+                    row.error = None
+                    row.sent_at = datetime.utcnow()
+                blast_manager._refresh_counts(db, _job_id)
+                return "available"
+
+        try:
+            with patch.object(blast_manager, "_run_account_queue", new=AsyncMock(side_effect=run_queue)):
+                asyncio.run(blast_manager._run_job(job_id))
+            with SessionLocal() as db:
+                job = db.get(BlastJob, job_id)
+                rows = db.query(BlastRecipient).filter(BlastRecipient.job_id == job_id).all()
+                self.assertEqual(job.status, "completed")
+                self.assertTrue(all(row.status == "sent" for row in rows))
+                self.assertTrue(all(row.account_id == backup_account_id for row in rows))
+        finally:
+            with SessionLocal() as db:
+                db.query(BlastJob).filter(BlastJob.id == job_id).delete()
+                db.query(TelegramAccount).filter(TelegramAccount.id == backup_account_id).delete()
+                db.commit()
 
     def test_header_does_not_render_profile_summary(self):
         response = self.client.get("/dashboard")

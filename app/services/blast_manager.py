@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import random
 from collections import defaultdict
@@ -84,24 +85,76 @@ class BlastManager:
                 job.status = "running"
                 job.started_at = job.started_at or datetime.utcnow()
                 db.commit()
+                try:
+                    selected_ids = list(dict.fromkeys(int(value) for value in json.loads(job.accounts_json)))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    selected_ids = []
+                if not selected_ids:
+                    selected_ids = [
+                        row[0] for row in db.query(BlastRecipient.account_id)
+                        .filter(BlastRecipient.job_id == job_id, BlastRecipient.account_id.isnot(None))
+                        .distinct().all()
+                    ]
+                valid_ids = {
+                    row[0] for row in db.query(TelegramAccount.id).filter(
+                        TelegramAccount.id.in_(selected_ids),
+                        TelegramAccount.user_id == job.user_id,
+                        TelegramAccount.is_active == 1,
+                        TelegramAccount.session_str.isnot(None),
+                    ).all()
+                }
+                available_ids = [account_id for account_id in selected_ids if account_id in valid_ids]
 
-                rows = (
-                    db.query(BlastRecipient.account_id, BlastRecipient.id)
-                    .filter(BlastRecipient.job_id == job_id, BlastRecipient.status == "pending")
-                    .order_by(BlastRecipient.account_id, BlastRecipient.sort_order)
-                    .all()
+            while available_ids and not self._stop_flags.get(job_id, False):
+                with SessionLocal() as db:
+                    recipients = db.query(BlastRecipient).filter(
+                        BlastRecipient.job_id == job_id,
+                        BlastRecipient.status == "pending",
+                    ).order_by(BlastRecipient.sort_order).all()
+                    if not recipients:
+                        break
+                    for index, recipient in enumerate(recipients):
+                        if recipient.account_id not in available_ids:
+                            recipient.account_id = available_ids[index % len(available_ids)]
+                    db.commit()
+                    grouped: Dict[int, List[int]] = defaultdict(list)
+                    for recipient in recipients:
+                        grouped[recipient.account_id].append(recipient.id)
+
+                account_ids = list(grouped)
+                results = await asyncio.gather(
+                    *(self._run_account_queue(job_id, account_id, grouped[account_id]) for account_id in account_ids),
+                    return_exceptions=True,
                 )
+                unavailable_ids = {
+                    account_id for account_id, result in zip(account_ids, results)
+                    if isinstance(result, Exception) or result != "available"
+                }
+                available_ids = [account_id for account_id in available_ids if account_id not in unavailable_ids]
+                if self._stop_flags.get(job_id, False):
+                    break
 
-            grouped: Dict[int, List[int]] = defaultdict(list)
-            for account_id, recipient_id in rows:
-                if account_id is not None:
-                    grouped[account_id].append(recipient_id)
+                with SessionLocal() as db:
+                    paused = db.query(BlastRecipient).filter(
+                        BlastRecipient.job_id == job_id,
+                        BlastRecipient.status == "paused",
+                    ).order_by(BlastRecipient.sort_order).all()
+                    if paused and available_ids:
+                        for index, recipient in enumerate(paused):
+                            recipient.account_id = available_ids[index % len(available_ids)]
+                            recipient.status = "pending"
+                            recipient.error = "Dialihkan otomatis ke akun berikutnya"
+                            recipient.updated_at = datetime.utcnow()
+                        self._refresh_counts(db, job_id)
 
-            await asyncio.gather(
-                *(self._run_account_queue(job_id, account_id, recipient_ids)
-                  for account_id, recipient_ids in grouped.items()),
-                return_exceptions=True,
-            )
+            with SessionLocal() as db:
+                remaining = db.query(BlastRecipient).filter(
+                    BlastRecipient.job_id == job_id,
+                    BlastRecipient.status == "pending",
+                ).all()
+                if remaining:
+                    self._pause_many(db, [row.id for row in remaining], "Belum dikirim: semua akun tidak tersedia atau sedang dibatasi")
+                    self._refresh_counts(db, job_id)
             self._finalize_job(job_id)
         except Exception as exc:
             with SessionLocal() as db:
@@ -123,7 +176,8 @@ class BlastManager:
 
     # ─── Per-account queue ───────────────────────────────────────────────────
 
-    async def _run_account_queue(self, job_id: int, account_id: int, recipient_ids: Iterable[int]) -> None:
+    async def _run_account_queue(self, job_id: int, account_id: int, recipient_ids: Iterable[int]) -> str:
+        recipient_ids = list(recipient_ids)
         account_lock = self.account_locks.get(account_id)
         if account_lock is None:
             account_lock = asyncio.Lock()
@@ -139,9 +193,9 @@ class BlastManager:
                     or not job
                     or account.user_id != job.user_id
                 ):
-                    self._fail_many(db, recipient_ids, "Akun tidak ditemukan atau session Telegram kosong")
+                    self._pause_many(db, recipient_ids, "Belum dikirim: akun tidak tersedia")
                     self._refresh_counts(db, job_id)
-                    return
+                    return "unavailable"
 
                 account_snapshot = {
                     "session_str": account.session_str,
@@ -172,12 +226,13 @@ class BlastManager:
                 await client.connect()
                 if not await client.is_user_authorized():
                     with SessionLocal() as db:
-                        self._fail_many(db, recipient_ids, "Session akun sudah tidak valid; hubungkan ulang akun")
+                        self._pause_many(db, recipient_ids, "Belum dikirim: session akun sudah tidak valid")
                         self._refresh_counts(db, job_id)
-                    return
+                    return "unavailable"
 
-                ids = list(recipient_ids)
+                ids = recipient_ids
                 consecutive_failures = 0
+                account_result = "available"
 
                 for position, recipient_id in enumerate(ids):
                     # ── Cek stop flag ───────────────────────────────────────
@@ -187,6 +242,7 @@ class BlastManager:
                             with SessionLocal() as db:
                                 self._pause_many(db, remaining, "Dihentikan oleh pengguna")
                                 self._refresh_counts(db, job_id)
+                        account_result = "stopped"
                         break
 
                     send_result = await self._send_one(
@@ -213,6 +269,7 @@ class BlastManager:
                                         f"Dihentikan: {MAX_CONSECUTIVE_FAILURES} kegagalan berturut-turut"
                                     )
                                     self._refresh_counts(db, job_id)
+                            account_result = "exhausted"
                             break
 
                     elif send_result in ("floodwait", "peerflood"):
@@ -227,6 +284,7 @@ class BlastManager:
                             with SessionLocal() as db:
                                 self._pause_many(db, remaining, reason)
                                 self._refresh_counts(db, job_id)
+                        account_result = "limited"
                         break
 
                     # ── Jeda acak antar kiriman ─────────────────────────────
@@ -234,11 +292,13 @@ class BlastManager:
                         actual_delay = random.uniform(delay_min, delay_max)
                         if actual_delay > 0:
                             await asyncio.sleep(actual_delay)
+                return account_result
 
             except Exception as exc:
                 with SessionLocal() as db:
-                    self._fail_many(db, recipient_ids, f"Koneksi akun gagal: {exc}", only_active=True)
+                    self._pause_many(db, recipient_ids, f"Belum dikirim: koneksi akun gagal ({exc})")
                     self._refresh_counts(db, job_id)
+                return "unavailable"
             finally:
                 await client.disconnect()
 
@@ -318,10 +378,10 @@ class BlastManager:
 
             except FloodWaitError as exc:
                 secs = exc.seconds
-                self._mark_failed(recipient_id, job_id, f"FloodWait {secs}s — antrean akun dijeda")
+                self._mark_paused(recipient_id, job_id, f"FloodWait {secs}s — dialihkan ke akun berikutnya")
                 return "floodwait"
             except PeerFloodError:
-                self._mark_failed(recipient_id, job_id, "PeerFlood — antrean akun dijeda")
+                self._mark_paused(recipient_id, job_id, "PeerFlood — dialihkan ke akun berikutnya")
                 return "peerflood"
             except Exception as exc:
                 # Gagal biasa — lanjut ke nomer berikutnya, hitung counter
@@ -335,6 +395,15 @@ class BlastManager:
             recipient = db.get(BlastRecipient, recipient_id)
             if recipient:
                 recipient.status = "failed"
+                recipient.error = error[:1000]
+                recipient.updated_at = datetime.utcnow()
+            self._refresh_counts(db, job_id)
+
+    def _mark_paused(self, recipient_id: int, job_id: int, error: str) -> None:
+        with SessionLocal() as db:
+            recipient = db.get(BlastRecipient, recipient_id)
+            if recipient:
+                recipient.status = "paused"
                 recipient.error = error[:1000]
                 recipient.updated_at = datetime.utcnow()
             self._refresh_counts(db, job_id)

@@ -21,6 +21,10 @@
         <label>Akun Pengirim <span class="label-note">centang satu atau beberapa akun</span></label>
         <input class="account-search" id="blast-account-search" type="search" placeholder="Cari nama atau nomor akun…" aria-label="Cari akun pengirim">
       </div>
+      <div class="use-all-accounts-row">
+        <button class="btn btn-primary" type="button" id="use-all-accounts">Gunakan semua akun</button>
+        <span class="use-all-accounts-note" id="use-all-accounts-note">Akun aktif akan dipilih dan sisa antrean otomatis dialihkan jika satu akun dibatasi.</span>
+      </div>
       <div class="account-grid" id="blast-account-grid">
         {% for acc in accounts %}
         <label class="account-choice" data-account-search="{{ acc.label or '' }} {{ acc.phone }}" {% if loop.index > 12 %}hidden{% endif %}>
@@ -207,6 +211,30 @@ const showAllAccounts = document.getElementById('show-all-accounts');
 const hideAccounts = document.getElementById('hide-accounts');
 const accountSearch = document.getElementById('blast-account-search');
 const accountControls = document.getElementById('blast-account-controls');
+const useAllAccounts = document.getElementById('use-all-accounts');
+const useAllAccountsNote = document.getElementById('use-all-accounts-note');
+useAllAccounts?.addEventListener('click', async () => {
+  useAllAccounts.disabled = true;
+  useAllAccountsNote.textContent = 'Memeriksa akun yang aktif…';
+  try {
+    const response = await fetch('/api/inbox/unread', {cache:'no-store'});
+    if (!response.ok) throw new Error();
+    const connected = new Set((await response.json()).connected_account_ids || []);
+    let selectedCount = 0;
+    accountChoices.forEach((choice) => {
+      const checkbox = choice.querySelector('[name="account_ids"]');
+      checkbox.checked = connected.has(Number(checkbox.value));
+      if (checkbox.checked) selectedCount += 1;
+    });
+    useAllAccountsNote.textContent = selectedCount
+      ? `${selectedCount} akun aktif dipilih. Failover otomatis siap digunakan.`
+      : 'Tidak ada akun aktif. Hubungkan ulang akun Telegram terlebih dahulu.';
+  } catch (_error) {
+    useAllAccountsNote.textContent = 'Status akun gagal diperiksa. Coba tekan kembali.';
+  } finally {
+    useAllAccounts.disabled = false;
+  }
+});
 if (accountSearch) {
   let visibleAccounts = 12;
 
