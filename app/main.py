@@ -22,7 +22,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import text
 
 from app.auth import AuthenticationRequired, session_secret_for_middleware
-from app.database import SessionLocal, engine
+from app.database import engine
 from app.migrations import initialize_database
 from app.models import BlastJob, BlastRecipient, DeviceSession, InboxConversation, InboxMessage, TelegramAccount, User  # noqa: F401
 from app.services.blast_manager import blast_manager
@@ -66,12 +66,6 @@ app.include_router(security.router)
 
 @app.on_event("startup")
 async def resume_jobs_after_restart():
-    # Semua akun yang memiliki session valid dapat dipilih per job/tab.
-    with SessionLocal() as db:
-        db.query(TelegramAccount).filter(TelegramAccount.session_str.isnot(None)).update(
-            {TelegramAccount.is_active: 1}, synchronize_session=False
-        )
-        db.commit()
     await inbox_manager.start_all()
     await blast_manager.resume_incomplete_jobs()
 

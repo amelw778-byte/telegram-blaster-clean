@@ -29,6 +29,7 @@ os.environ.pop("GOOGLE_CLIENT_SECRET", None)
 
 from fastapi.testclient import TestClient  # noqa: E402
 from telethon import types  # noqa: E402
+from telethon.errors import AuthKeyDuplicatedError  # noqa: E402
 
 from app.auth import hash_password, upsert_google_user, verify_password  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
@@ -36,7 +37,7 @@ from app.main import app  # noqa: E402
 from app.models import BlastJob, BlastRecipient, DeviceSession, InboxConversation, InboxMessage, TelegramAccount, User  # noqa: E402
 from app.security import ENCRYPTED_PREFIX, decrypt_sensitive, encrypt_sensitive  # noqa: E402
 from app.routers import scraper  # noqa: E402
-from app.routers.telegram import _normalize_delay_range  # noqa: E402
+from app.routers.telegram import _normalize_delay_range, _normalize_username  # noqa: E402
 from app.services.blast_manager import blast_manager  # noqa: E402
 from app.services.inbox_manager import inbox_manager  # noqa: E402
 from app.template_utils import jakarta_time  # noqa: E402
@@ -122,6 +123,9 @@ class TenantIsolationTests(unittest.TestCase):
         self.client = TestClient(app)
         self.client.cookies.set("porslabs_session", _session_cookie(self.owner_id))
 
+    def tearDown(self):
+        self.client.close()
+
     def test_dashboard_only_renders_current_users_data(self):
         response = self.client.get("/dashboard")
         self.assertEqual(response.status_code, 200)
@@ -152,6 +156,11 @@ class TenantIsolationTests(unittest.TestCase):
             "consent_confirmed": "true",
         })
         self.assertIn("Maksimal 500 username", over_limit.text)
+
+    def test_blast_target_rejects_values_that_do_not_fit_the_database(self):
+        self.assertIsNone(_normalize_username("x" * 256))
+        self.assertIsNone(_normalize_username("invalid target"))
+        self.assertEqual(_normalize_username("https://t.me/Valid_Target?start=1"), ("Valid_Target", "valid_target"))
 
     def test_blast_account_picker_collapses_after_twelve(self):
         with SessionLocal() as db:
@@ -310,6 +319,43 @@ class TenantIsolationTests(unittest.TestCase):
             client_factory.assert_not_called()
             self.assertFalse(connected_client.disconnected)
             self.assertIs(sender.await_args.kwargs["client"], connected_client)
+        finally:
+            with SessionLocal() as db:
+                db.query(BlastJob).filter(BlastJob.id == job_id).delete()
+                db.commit()
+
+    def test_completed_recipient_updates_job_counts_without_full_recount(self):
+        with SessionLocal() as db:
+            job = BlastJob(
+                user_id=self.owner_id,
+                status="running",
+                message="count test",
+                accounts_json=json.dumps([self.owner_account_id]),
+                total_count=1,
+                pending_count=1,
+            )
+            db.add(job)
+            db.flush()
+            recipient = BlastRecipient(
+                job_id=job.id,
+                account_id=self.owner_account_id,
+                username="count_target",
+                normalized_username="count_target",
+            )
+            db.add(recipient)
+            db.commit()
+            job_id = job.id
+            recipient_id = recipient.id
+
+        sender = SimpleNamespace(send_message=AsyncMock())
+        try:
+            self.assertEqual(
+                asyncio.run(blast_manager._send_one(sender, job_id, recipient_id, "test", None)),
+                "continue",
+            )
+            with SessionLocal() as db:
+                job = db.get(BlastJob, job_id)
+                self.assertEqual((job.sent_count, job.pending_count), (1, 0))
         finally:
             with SessionLocal() as db:
                 db.query(BlastJob).filter(BlastJob.id == job_id).delete()
@@ -716,7 +762,7 @@ class TenantIsolationTests(unittest.TestCase):
                 ).delete(synchronize_session=False)
                 db.commit()
 
-    def test_inbox_listener_stores_the_receiving_account(self):
+    def test_inbox_listener_keeps_archived_conversation_silent(self):
         with SessionLocal() as db:
             db.add_all([
                 InboxConversation(
@@ -763,12 +809,32 @@ class TenantIsolationTests(unittest.TestCase):
                 InboxMessage.peer_id == 707,
             ).all()
             self.assertEqual(len(messages), 2)
-            self.assertTrue(all(not message.is_archived for message in messages))
+            self.assertTrue(messages[0].is_archived)
             self.assertIn("Balasan masuk untuk Meysa", {message.body for message in messages})
-            self.assertFalse(db.query(InboxConversation).filter(
+            self.assertTrue(db.query(InboxConversation).filter(
                 InboxConversation.account_id == self.owner_account_id,
                 InboxConversation.peer_id == 707,
             ).one().is_archived)
+
+        unread = self.client.get("/api/inbox/unread").json()
+        self.assertNotEqual(unread["latest_preview"], "Balasan masuk untuk Meysa")
+
+    def test_permanent_session_error_stops_listener_and_marks_account_inactive(self):
+        client = SimpleNamespace(
+            connect=AsyncMock(side_effect=AuthKeyDuplicatedError(request=None)),
+            add_event_handler=lambda *_args: None,
+            is_connected=lambda: False,
+        )
+        with (
+            patch("app.services.inbox_manager.StringSession", return_value=object()),
+            patch("app.services.inbox_manager.TelegramClient", return_value=client),
+        ):
+            asyncio.run(inbox_manager._listen(self.owner_account_id))
+        with SessionLocal() as db:
+            account = db.get(TelegramAccount, self.owner_account_id)
+            self.assertFalse(account.is_active)
+            account.is_active = 1
+            db.commit()
 
     def test_inbox_reply_automatically_uses_receiving_account(self):
         peer_id = 303

@@ -54,7 +54,7 @@ def _normalize_username(raw: str) -> tuple[str, str] | None:
     value = re.sub(r"^https?://t\.me/", "", value, flags=re.I)
     value = re.sub(r"^t\.me/", "", value, flags=re.I)
     value = value.split("?")[0].split("/")[0].lstrip("@").strip()
-    if not value:
+    if not value or len(value) > 255 or any(character.isspace() for character in value):
         return None
     return value, value.casefold()
 
@@ -329,24 +329,6 @@ async def _save_account(request, db, current_user, phone, api_id, api_hash, labe
 # ACCOUNT MANAGEMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post("/switch-account/{account_id}")
-def switch_account(
-    account_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    _csrf: None = Depends(verify_csrf),
-):
-    """Kompatibilitas lama: akun hanya ditandai terhubung, tidak mematikan akun lain."""
-    account = db.query(TelegramAccount).filter(
-        TelegramAccount.id == account_id,
-        TelegramAccount.user_id == current_user.id,
-    ).first()
-    if account:
-        account.is_active = 1
-        db.commit()
-    return RedirectResponse(url=f"/blast?account_id={account_id}", status_code=303)
-
-
 @router.post("/stop-job/{job_id}")
 def stop_job(
     job_id: int,
@@ -467,7 +449,6 @@ async def send_blast(
     account_ids: List[int] = Form(...),
     usernames: str = Form(...),
     message: str = Form(...),
-    consent_confirmed: bool = Form(False),
     delay_min: float = Form(0.0),
     delay_max: float = Form(0.0),
     image: UploadFile | None = File(None),
@@ -475,9 +456,6 @@ async def send_blast(
     current_user: User = Depends(get_current_user),
     _csrf: None = Depends(verify_csrf),
 ):
-    if not consent_confirmed:
-        return await _blast_form_error(request, db, current_user, account_ids, usernames, message, "Konfirmasi penerima opt-in wajib dicentang.")
-
     accounts = (
         db.query(TelegramAccount)
         .filter(
@@ -587,19 +565,21 @@ async def send_blast(
         db.add(job)
         db.flush()
 
+        active_targets = {
+            row[0]
+            for row in db.query(BlastRecipient.normalized_username)
+            .join(BlastJob, BlastJob.id == BlastRecipient.job_id)
+            .filter(
+                BlastRecipient.normalized_username.in_(seen),
+                BlastJob.user_id == current_user.id,
+                BlastRecipient.status.in_(["pending", "sending"]),
+                BlastJob.status.in_(["queued", "running"]),
+            )
+            .all()
+        }
         for index, (display, normalized) in enumerate(cleaned):
             account = accounts[index % len(accounts)]
-            collision = (
-                db.query(BlastRecipient.id)
-                .join(BlastJob, BlastJob.id == BlastRecipient.job_id)
-                .filter(
-                    BlastRecipient.normalized_username == normalized,
-                    BlastJob.user_id == current_user.id,
-                    BlastRecipient.status.in_(["pending", "sending"]),
-                    BlastJob.status.in_(["queued", "running"]),
-                )
-                .first()
-            )
+            collision = normalized in active_targets
             status = "skipped" if collision else "pending"
             error = "Dilewati: username sedang berada di antrean job lain" if collision else None
             db.add(BlastRecipient(

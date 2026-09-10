@@ -7,6 +7,13 @@ from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 from telethon import TelegramClient, events, functions, types
+from telethon.errors import (
+    AuthKeyDuplicatedError,
+    AuthKeyUnregisteredError,
+    SessionRevokedError,
+    UserDeactivatedBanError,
+    UserDeactivatedError,
+)
 from telethon.sessions import StringSession
 
 from app.database import DB_PATH, SessionLocal
@@ -18,6 +25,13 @@ INBOX_MEDIA_DIR = Path(
     os.getenv("INBOX_MEDIA_DIR", str(DB_PATH.parent / "inbox-media"))
 ).expanduser().resolve()
 MAX_INBOX_MEDIA_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+PERMANENT_SESSION_ERRORS = (
+    AuthKeyDuplicatedError,
+    AuthKeyUnregisteredError,
+    SessionRevokedError,
+    UserDeactivatedBanError,
+    UserDeactivatedError,
+)
 
 
 class InboxManager:
@@ -44,6 +58,14 @@ class InboxManager:
         task = self.tasks.get(account_id)
         client = self.clients.get(account_id)
         return bool(task and not task.done() and client and client.is_connected())
+
+    @staticmethod
+    def _set_account_active(account_id: int, active: bool) -> None:
+        with SessionLocal() as db:
+            account = db.get(TelegramAccount, account_id)
+            if account and bool(account.is_active) != active:
+                account.is_active = int(active)
+                db.commit()
 
     async def start_all(self) -> None:
         if not self.enabled():
@@ -107,11 +129,21 @@ class InboxManager:
                 await client.connect()
                 if not await client.is_user_authorized():
                     logger.warning("Inbox listener account %s is no longer authorized", account_id)
+                    self._set_account_active(account_id, False)
                     return
+                self._set_account_active(account_id, True)
                 self.clients[account_id] = client
                 await client.run_until_disconnected()
             except asyncio.CancelledError:
                 raise
+            except PERMANENT_SESSION_ERRORS as exc:
+                self._set_account_active(account_id, False)
+                logger.error(
+                    "Inbox listener account %s stopped until reconnected: %s",
+                    account_id,
+                    type(exc).__name__,
+                )
+                return
             except Exception:
                 logger.exception("Inbox listener account %s disconnected", account_id)
             finally:
@@ -194,7 +226,6 @@ class InboxManager:
             conversation.peer_name = peer_name[:255]
             conversation.peer_username = getattr(peer, "username", None) or None
             conversation.avatar_path = avatar_path or conversation.avatar_path
-            conversation.is_archived = False
             conversation.marked_unread = False
             conversation.updated_at = created_at
             db.add(InboxMessage(
@@ -214,13 +245,6 @@ class InboxManager:
                 created_at=created_at,
             ))
             try:
-                db.flush()
-                db.query(InboxMessage).filter(
-                    InboxMessage.user_id == account.user_id,
-                    InboxMessage.account_id == account.id,
-                    InboxMessage.peer_id == input_peer.user_id,
-                    InboxMessage.is_archived.is_(True),
-                ).update({InboxMessage.is_archived: False}, synchronize_session=False)
                 db.commit()
             except IntegrityError:
                 db.rollback()

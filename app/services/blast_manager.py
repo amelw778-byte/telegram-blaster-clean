@@ -18,7 +18,6 @@ from app.models import BlastJob, BlastRecipient, TelegramAccount
 from app.services.inbox_manager import inbox_manager
 
 
-TERMINAL_RECIPIENT_STATES = {"sent", "failed", "skipped", "paused"}
 ACTIVE_JOB_STATES = {"queued", "running"}
 MAX_CONSECUTIVE_FAILURES = 5  # Berhenti per-akun setelah gagal berturut-turut
 MIN_SEND_DELAY_SECONDS = 0.0
@@ -354,10 +353,13 @@ class BlastManager:
                     .first()
                 )
                 if duplicate:
-                    recipient.status = "skipped"
-                    recipient.error = "Dilewati: username sudah dikirim oleh job lain yang berjalan bersamaan"
-                    recipient.updated_at = datetime.utcnow()
-                    self._refresh_counts(db, job_id)
+                    self._finish_recipient(
+                        db,
+                        job_id,
+                        recipient,
+                        "skipped",
+                        "Dilewati: username sudah dikirim oleh job lain yang berjalan bersamaan",
+                    )
                     return "continue"
 
                 recipient.status = "sending"
@@ -377,11 +379,8 @@ class BlastManager:
                 with SessionLocal() as db:
                     recipient = db.get(BlastRecipient, recipient_id)
                     if recipient:
-                        recipient.status = "sent"
-                        recipient.error = None
                         recipient.sent_at = datetime.utcnow()
-                        recipient.updated_at = datetime.utcnow()
-                        self._refresh_counts(db, job_id)
+                        self._finish_recipient(db, job_id, recipient, "sent")
                 return "continue"
 
             except FloodWaitError as exc:
@@ -402,10 +401,7 @@ class BlastManager:
         with SessionLocal() as db:
             recipient = db.get(BlastRecipient, recipient_id)
             if recipient:
-                recipient.status = "failed"
-                recipient.error = error[:1000]
-                recipient.updated_at = datetime.utcnow()
-            self._refresh_counts(db, job_id)
+                self._finish_recipient(db, job_id, recipient, "failed", error)
 
     def _mark_paused(self, recipient_id: int, job_id: int, error: str) -> None:
         with SessionLocal() as db:
@@ -414,7 +410,32 @@ class BlastManager:
                 recipient.status = "paused"
                 recipient.error = error[:1000]
                 recipient.updated_at = datetime.utcnow()
-            self._refresh_counts(db, job_id)
+                db.commit()
+
+    @staticmethod
+    def _finish_recipient(
+        db,
+        job_id: int,
+        recipient: BlastRecipient,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        counter = {
+            "sent": BlastJob.sent_count,
+            "failed": BlastJob.failed_count,
+            "skipped": BlastJob.skipped_count,
+        }[status]
+        recipient.status = status
+        recipient.error = error[:1000] if error else None
+        recipient.updated_at = datetime.utcnow()
+        db.query(BlastJob).filter(BlastJob.id == job_id).update(
+            {
+                counter: counter + 1,
+                BlastJob.pending_count: BlastJob.pending_count - 1,
+            },
+            synchronize_session=False,
+        )
+        db.commit()
 
     @staticmethod
     def _pause_many(db, recipient_ids: Iterable[int], reason: str) -> None:
@@ -428,25 +449,6 @@ class BlastManager:
             {
                 BlastRecipient.status: "paused",
                 BlastRecipient.error: reason[:1000],
-                BlastRecipient.updated_at: datetime.utcnow(),
-            },
-            synchronize_session=False,
-        )
-
-    @staticmethod
-    def _fail_many(db, recipient_ids: Iterable[int], error: str, only_active: bool = False) -> None:
-        ids = list(recipient_ids)
-        if not ids:
-            return
-        query = db.query(BlastRecipient).filter(BlastRecipient.id.in_(ids))
-        if only_active:
-            query = query.filter(BlastRecipient.status.in_(["pending", "sending"]))
-        else:
-            query = query.filter(BlastRecipient.status == "pending")
-        query.update(
-            {
-                BlastRecipient.status: "failed",
-                BlastRecipient.error: error[:1000],
                 BlastRecipient.updated_at: datetime.utcnow(),
             },
             synchronize_session=False,
