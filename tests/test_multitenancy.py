@@ -251,6 +251,56 @@ class TenantIsolationTests(unittest.TestCase):
                 db.query(TelegramAccount).filter(TelegramAccount.id == backup_account_id).delete()
                 db.commit()
 
+    def test_blast_reuses_the_connected_inbox_client(self):
+        with SessionLocal() as db:
+            job = BlastJob(
+                user_id=self.owner_id,
+                status="running",
+                message="reuse client test",
+                accounts_json=json.dumps([self.owner_account_id]),
+                consent_confirmed=True,
+            )
+            db.add(job)
+            db.flush()
+            recipient = BlastRecipient(
+                job_id=job.id,
+                account_id=self.owner_account_id,
+                username="reuse_client_target",
+                normalized_username="reuse_client_target",
+            )
+            db.add(recipient)
+            db.commit()
+            job_id = job.id
+            recipient_id = recipient.id
+
+        class ConnectedClient:
+            disconnected = False
+
+            def is_connected(self):
+                return True
+
+            async def disconnect(self):
+                self.disconnected = True
+
+        connected_client = ConnectedClient()
+        try:
+            with (
+                patch.object(inbox_manager, "clients", {self.owner_account_id: connected_client}),
+                patch("app.services.blast_manager.TelegramClient") as client_factory,
+                patch.object(blast_manager, "_send_one", AsyncMock(return_value="continue")) as sender,
+            ):
+                result = asyncio.run(blast_manager._run_account_queue(
+                    job_id, self.owner_account_id, [recipient_id]
+                ))
+            self.assertEqual(result, "available")
+            client_factory.assert_not_called()
+            self.assertFalse(connected_client.disconnected)
+            self.assertIs(sender.await_args.kwargs["client"], connected_client)
+        finally:
+            with SessionLocal() as db:
+                db.query(BlastJob).filter(BlastJob.id == job_id).delete()
+                db.commit()
+
     def test_header_does_not_render_profile_summary(self):
         response = self.client.get("/dashboard")
         self.assertEqual(response.status_code, 200)

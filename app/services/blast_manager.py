@@ -15,6 +15,7 @@ from telethon.sessions import StringSession
 
 from app.database import SessionLocal
 from app.models import BlastJob, BlastRecipient, TelegramAccount
+from app.services.inbox_manager import inbox_manager
 
 
 TERMINAL_RECIPIENT_STATES = {"sent", "failed", "skipped", "paused"}
@@ -216,15 +217,19 @@ class BlastManager:
                 if delay_max < delay_min:
                     delay_max = delay_min
 
-            client = TelegramClient(
-                StringSession(account_snapshot["session_str"]),
-                account_snapshot["api_id"],
-                account_snapshot["api_hash"],
-            )
+            client = inbox_manager.clients.get(account_id)
+            temporary_client = not client or not client.is_connected()
+            if temporary_client:
+                client = TelegramClient(
+                    StringSession(account_snapshot["session_str"]),
+                    account_snapshot["api_id"],
+                    account_snapshot["api_hash"],
+                )
 
             try:
-                await client.connect()
-                if not await client.is_user_authorized():
+                if temporary_client:
+                    await client.connect()
+                if temporary_client and not await client.is_user_authorized():
                     with SessionLocal() as db:
                         self._pause_many(db, recipient_ids, "Belum dikirim: session akun sudah tidak valid")
                         self._refresh_counts(db, job_id)
@@ -300,7 +305,8 @@ class BlastManager:
                     self._refresh_counts(db, job_id)
                 return "unavailable"
             finally:
-                await client.disconnect()
+                if temporary_client:
+                    await client.disconnect()
 
     # ─── Single send ─────────────────────────────────────────────────────────
 
