@@ -38,18 +38,18 @@
   {% if accounts %}
   <div class="table-wrap">
     <table id="accounts-table">
-      <thead><tr><th>Label / Nomor</th><th>Status</th><th>Ditambahkan</th><th style="text-align:right;">Aksi</th></tr></thead>
+      <thead><tr><th class="account-col-label">Label / Nomor</th><th class="account-col-status">Status</th><th class="account-col-created">Ditambahkan</th><th class="account-col-actions" style="text-align:right;">Aksi</th></tr></thead>
       <tbody>
       {% for acc in accounts %}
         <tr data-search="{{ acc.label or '' }} {{ acc.phone }}">
-          <td><strong>{{ acc.label or acc.phone }}</strong><div class="muted small">{{ acc.phone }}</div></td>
-          <td>
+          <td class="account-col-label"><strong>{{ acc.label or acc.phone }}</strong><div class="muted small">{{ acc.phone }}</div></td>
+          <td class="account-col-status">
             <span class="account-presence is-checking" data-account-status="{{ acc.id }}" aria-live="polite">
               <span class="live-mark"></span><span data-account-status-label>Memeriksa…</span>
             </span>
           </td>
-          <td class="muted small">{{ acc.created_at.strftime('%d %b %Y %H:%M') if acc.created_at else '—' }}</td>
-          <td>
+          <td class="account-col-created muted small">{{ acc.created_at|jakarta_time }}</td>
+          <td class="account-col-actions">
             <div class="flex" style="justify-content:flex-end;">
               <a href="/blast?account_id={{ acc.id }}" class="btn btn-outline" style="padding:7px 12px;font-size:.8rem;">Pakai</a>
               <form method="post" action="/delete-account/{{ acc.id }}" style="margin:0;" onsubmit="return confirm('Hapus akun {{ acc.phone }}? Session akan dihapus permanen.')">
@@ -83,12 +83,13 @@
       {% for job in recent_jobs %}
         <tr>
           <td><a class="inline-link" href="/blast?job_id={{ job.id }}">#{{ job.id }}</a></td>
-          <td class="muted small">{{ job.created_at.strftime('%d %b %Y %H:%M:%S') if job.created_at else '—' }}</td>
+          <td class="muted small">{{ job.created_at|jakarta_time('%d %b %Y %H:%M:%S') }}</td>
           <td>
             {% if job.status == 'running' %}<span class="badge badge-orange">Sedang berjalan</span>
             {% elif job.status == 'queued' %}<span class="badge badge-blue">Menunggu</span>
             {% elif job.status == 'completed' %}<span class="badge badge-green">Selesai</span>
             {% elif job.status == 'partial' %}<span class="badge badge-purple">Selesai sebagian</span>
+            {% elif job.status == 'paused' %}<span class="badge badge-purple">Dijeda</span>
             {% else %}<span class="badge badge-red">Gagal</span>{% endif %}
           </td>
           <td><strong style="color:#86efac;">{{ job.sent_count }}</strong> / {{ job.total_count }}</td>

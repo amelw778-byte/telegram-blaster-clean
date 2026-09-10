@@ -364,7 +364,9 @@ class BlastManager:
                 recipient.error = None
                 recipient.updated_at = datetime.utcnow()
                 username = recipient.username
-                self._refresh_counts(db, job_id)
+                # pending_count mencakup pending + sending, jadi transisi ini
+                # cukup disimpan tanpa menghitung ulang seluruh job.
+                db.commit()
 
             try:
                 if image_path and Path(image_path).exists():

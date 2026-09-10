@@ -644,6 +644,12 @@ code { color: #c4b5fd; font-family: 'SFMono-Regular', Consolas, monospace; font-
   .account-list-head { align-items: stretch; flex-direction: column; }
   .account-search { width: 100% !important; }
   .table-wrap { margin-inline: -4px; width: calc(100% + 8px); }
+  #accounts-table { min-width: 590px; }
+  #accounts-table tr { display: grid; grid-template-columns: minmax(180px, 1fr) 100px 150px 150px; }
+  #accounts-table .account-col-label { order: 1; }
+  #accounts-table .account-col-status { order: 2; }
+  #accounts-table .account-col-actions { order: 3; }
+  #accounts-table .account-col-created { order: 4; }
   th, td { padding: 10px 12px; }
   .login-story, .login-panel { padding: 30px 24px; }
   .login-story { min-height: 330px; }

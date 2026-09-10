@@ -27,7 +27,7 @@ GOOGLE_REDIRECT_URI=https://your-domain.example/auth/google/callback
 BOOTSTRAP_OWNER_EMAIL=owner@example.com
 # Optional, comma-separated invite-only access:
 GOOGLE_ALLOWED_EMAILS=owner@example.com,team@example.com
-MAX_RECIPIENTS_PER_JOB=200
+MAX_RECIPIENTS_PER_JOB=500
 # Optional, untuk fitur Lupa Password
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587

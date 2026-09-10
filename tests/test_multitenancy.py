@@ -39,6 +39,7 @@ from app.routers import scraper  # noqa: E402
 from app.routers.telegram import _normalize_delay_range  # noqa: E402
 from app.services.blast_manager import blast_manager  # noqa: E402
 from app.services.inbox_manager import inbox_manager  # noqa: E402
+from app.template_utils import jakarta_time  # noqa: E402
 
 
 def _session_cookie(user_id: int) -> str:
@@ -130,6 +131,8 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertIn('id="dashboard-account-search"', response.text)
         self.assertNotIn("Other Secret Account", response.text)
         self.assertNotIn("other secret job", response.text)
+    def test_visible_times_use_jakarta_timezone(self):
+        self.assertEqual(jakarta_time(datetime(2026, 9, 10, 8, 20), "%H:%M"), "15:20")
 
     def test_zero_delay_is_available_and_preserved(self):
         response = self.client.get("/blast")
@@ -138,6 +141,17 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertEqual(_normalize_delay_range(0, 0), (0.0, 0.0))
         self.assertEqual(_normalize_delay_range(0.25, 0.75), (0.25, 0.75))
         self.assertEqual(_normalize_delay_range(-5, -1), (0.0, 0.0))
+        self.assertIn("maksimal 500", response.text)
+        self.assertIn("<th>Gagal</th><th>Dilewati</th>", response.text)
+
+        over_limit = self.client.post("/send-blast", data={
+            "csrf_token": _csrf_from(response.text),
+            "account_ids": str(self.owner_account_id),
+            "usernames": "\n".join(f"target_{index}" for index in range(501)),
+            "message": "Batas aman",
+            "consent_confirmed": "true",
+        })
+        self.assertIn("Maksimal 500 username", over_limit.text)
 
     def test_blast_account_picker_collapses_after_twelve(self):
         with SessionLocal() as db:

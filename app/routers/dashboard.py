@@ -9,10 +9,12 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import BlastJob, BlastRecipient, TelegramAccount, User
+from app.template_utils import jakarta_time
 
 router = APIRouter()
 APP_DIR = Path(__file__).resolve().parents[1]
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+templates.env.filters["jakarta_time"] = jakarta_time
 
 
 @router.get("/dashboard")

@@ -21,14 +21,16 @@ from app.database import DB_PATH, get_db
 from app.models import BlastJob, BlastRecipient, TelegramAccount, User
 from app.services.blast_manager import blast_manager
 from app.services.inbox_manager import inbox_manager
+from app.template_utils import jakarta_time
 
 router = APIRouter()
 APP_DIR = Path(__file__).resolve().parents[1]
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+templates.env.filters["jakarta_time"] = jakarta_time
 
 MIN_DELAY_SECONDS = 0.0
 MAX_DELAY_SECONDS = 3600
-MAX_RECIPIENTS_PER_JOB = int(os.getenv("MAX_RECIPIENTS_PER_JOB", "200"))
+MAX_RECIPIENTS_PER_JOB = int(os.getenv("MAX_RECIPIENTS_PER_JOB", "500"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 UPLOAD_DIR = Path(
     os.getenv("BLASTER_UPLOAD_DIR", str(DB_PATH.parent / "uploads"))

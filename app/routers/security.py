@@ -9,12 +9,14 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user, verify_csrf
 from app.database import get_db
 from app.models import DeviceSession, User
+from app.template_utils import jakarta_time
 
 
 router = APIRouter(prefix="/security", tags=["security"])
 templates = Jinja2Templates(
     directory=str(Path(__file__).resolve().parents[1] / "templates")
 )
+templates.env.filters["jakarta_time"] = jakarta_time
 
 
 @router.get("/sessions")

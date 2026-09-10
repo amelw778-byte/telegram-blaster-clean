@@ -34,8 +34,8 @@
         <div class="session-title">{{ session.device_name }} {% if session.id == current_session_id %}<span class="badge badge-green">Perangkat ini</span>{% endif %}</div>
         <div class="session-meta">
           <span>IP {{ session.ip_address or 'tidak tersedia' }}</span>
-          <span>Aktif {{ session.last_seen_at.strftime('%d %b %Y %H:%M') }}</span>
-          <span>Kedaluwarsa {{ session.expires_at.strftime('%d %b %Y %H:%M') }}</span>
+          <span>Aktif {{ session.last_seen_at|jakarta_time }}</span>
+          <span>Kedaluwarsa {{ session.expires_at|jakarta_time }}</span>
         </div>
       </div>
       <form method="post" action="/security/sessions/{{ session.id }}/revoke" onsubmit="return confirm('Keluarkan sesi ini?');">

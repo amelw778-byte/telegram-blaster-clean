@@ -167,15 +167,23 @@
   {% if recent_jobs %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Job</th><th>Status</th><th>Total</th><th>Terkirim</th><th>Dibuat</th></tr></thead>
+      <thead><tr><th>Job</th><th>Dibuat</th><th>Status</th><th>Terkirim</th><th>Gagal</th><th>Dilewati</th></tr></thead>
       <tbody>
       {% for item in recent_jobs %}
         <tr>
           <td><a class="inline-link" href="/blast?job_id={{ item.id }}">#{{ item.id }}</a></td>
-          <td>{{ item.status }}</td>
-          <td>{{ item.total_count }}</td>
-          <td>{{ item.sent_count }}</td>
-          <td class="muted small">{{ item.created_at.strftime('%d %b %Y %H:%M:%S') if item.created_at else '—' }}</td>
+          <td class="muted small">{{ item.created_at|jakarta_time('%d %b %Y %H:%M:%S') }}</td>
+          <td>
+            {% if item.status == 'running' %}<span class="badge badge-orange">Sedang berjalan</span>
+            {% elif item.status == 'queued' %}<span class="badge badge-blue">Menunggu</span>
+            {% elif item.status == 'completed' %}<span class="badge badge-green">Selesai</span>
+            {% elif item.status == 'partial' %}<span class="badge badge-purple">Selesai sebagian</span>
+            {% elif item.status == 'paused' %}<span class="badge badge-purple">Dijeda</span>
+            {% else %}<span class="badge badge-red">Gagal</span>{% endif %}
+          </td>
+          <td><strong style="color:#86efac;">{{ item.sent_count }}</strong> / {{ item.total_count }}</td>
+          <td style="color:#fca5a5;">{{ item.failed_count }}</td>
+          <td class="muted">{{ item.skipped_count }}</td>
         </tr>
       {% endfor %}
       </tbody>

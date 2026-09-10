@@ -244,7 +244,7 @@
         <a class="conversation-link" href="{{ item.url }}">
           <span class="avatar">{{ item.peer_name[:1] }}{% if state.avatar_path != '-' %}<img loading="lazy" src="/inbox/avatar/{{ state.id }}" alt="" onerror="this.hidden=true">{% endif %}</span>
           <span class="conversation-main">
-            <span class="conversation-line"><span class="conversation-name">{{ item.peer_name }}</span><time class="conversation-time">{{ (item.latest.created_at if item.latest else state.updated_at).strftime('%H:%M') }}</time></span>
+            <span class="conversation-line"><span class="conversation-name">{{ item.peer_name }}</span><time class="conversation-time">{{ (item.latest.created_at if item.latest else state.updated_at)|jakarta_time('%H:%M') }}</time></span>
             <span class="conversation-sub">
               <span class="conversation-preview">{{ item.account_label }} · {% if item.latest %}{% if item.latest.direction == 'out' %}✓ {% endif %}{{ item.latest.body }}{% else %}Percakapan dibersihkan{% endif %}</span>
               <span class="conversation-flags"><span class="account-presence is-checking" data-account-status="{{ item.account_id }}"><span class="live-mark"></span><span data-account-status-label>Memeriksa…</span></span>{% if state.is_muted %}♩{% endif %}{% if state.is_pinned %}⌖{% endif %}{% if state.is_favorite %}★{% endif %}{% if state.list_label %}<span class="list-label">{{ state.list_label }}</span>{% endif %}{% if item.unread %}<span class="unread-badge">{{ item.unread }}</span>{% endif %}</span>
@@ -278,7 +278,7 @@
       <span class="avatar large">{{ selected.peer_name[:1] }}{% if selected.avatar_path != '-' %}<img src="/inbox/avatar/{{ selected.id }}" alt="" onerror="this.hidden=true">{% endif %}</span>
       <div class="chat-person">
         <div class="chat-name">{{ selected.peer_name }}{% if selected.is_favorite %}<span title="Favorit">★</span>{% endif %}</div>
-        <div class="chat-meta"><span>Terakhir pesan {{ selected.updated_at.strftime('%d/%m %H:%M') }}</span><span class="route-label">· via {{ selected.account_label }}</span><span class="account-presence is-checking" data-account-status="{{ selected.account_id }}"><span class="live-mark"></span><span data-account-status-label>Memeriksa…</span></span></div>
+        <div class="chat-meta"><span>Terakhir pesan {{ selected.updated_at|jakarta_time('%d/%m %H:%M') }}</span><span class="route-label">· via {{ selected.account_label }}</span><span class="account-presence is-checking" data-account-status="{{ selected.account_id }}"><span class="live-mark"></span><span data-account-status-label>Memeriksa…</span></span></div>
       </div>
       <div class="chat-head-actions">
         <button class="icon-button" type="button" id="chat-search-toggle" aria-label="Cari dalam chat"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg></button>
@@ -303,7 +303,7 @@
           {% elif message.media_path and message.media_type and message.media_type.startswith('audio/') %}<audio class="message-media" controls src="/inbox/media/{{ message.id }}"></audio>
           {% elif message.media_path %}<a class="file-message" href="/inbox/media/{{ message.id }}" target="_blank">📎 {{ message.media_name or 'Lampiran' }}</a>{% endif %}
           <span class="message-text">{{ message.body }}</span>
-          <span class="bubble-meta">{% if message.is_starred %}<span title="Pesan berbintang">★</span>{% endif %}{{ message.created_at.strftime('%H:%M') }}{% if message.direction == 'out' %}<span>✓✓</span>{% endif %}</span>
+          <span class="bubble-meta">{% if message.is_starred %}<span title="Pesan berbintang">★</span>{% endif %}{{ message.created_at|jakarta_time('%H:%M') }}{% if message.direction == 'out' %}<span>✓✓</span>{% endif %}</span>
           <form class="star-message-form {% if message.is_starred %}is-starred{% endif %}" method="post" action="/inbox/message/{{ message.id }}/star">
             {{ fields(selected.account_id, selected.peer_id) }}
             <button class="star-button" type="submit" aria-label="{% if message.is_starred %}Hapus bintang{% else %}Beri bintang{% endif %}">★</button>
