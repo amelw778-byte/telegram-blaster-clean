@@ -263,30 +263,60 @@ class InboxManager:
             if temporary and client.is_connected():
                 await client.disconnect()
 
-    async def set_blocked(
+    async def set_blocked_all(
         self,
-        account_id: int,
+        user_id: int,
         peer_id: int,
-        peer_access_hash: int,
+        peer_username: str | None,
         blocked: bool,
-    ) -> None:
-        with SessionLocal() as db:
-            account = db.get(TelegramAccount, account_id)
-            if not account or not account.session_str:
-                raise RuntimeError("Akun Telegram tidak tersedia")
-            credentials = (account.session_str, account.api_id, account.api_hash)
+    ) -> tuple[set[int], int]:
+        connected_ids = {
+            account_id for account_id, client in self.clients.items()
+            if client.is_connected()
+        }
+        if not connected_ids:
+            return set(), 0
 
-        client = self.clients.get(account_id)
-        temporary = not client or not client.is_connected()
-        if temporary:
-            client = TelegramClient(StringSession(credentials[0]), credentials[1], credentials[2])
-            await client.connect()
-        try:
-            request = functions.contacts.BlockRequest if blocked else functions.contacts.UnblockRequest
-            await client(request(types.InputPeerUser(peer_id, peer_access_hash)))
-        finally:
-            if temporary and client.is_connected():
-                await client.disconnect()
+        with SessionLocal() as db:
+            account_ids = [
+                row[0] for row in db.query(TelegramAccount.id).filter(
+                    TelegramAccount.id.in_(connected_ids),
+                    TelegramAccount.user_id == user_id,
+                    TelegramAccount.is_active == 1,
+                    TelegramAccount.session_str.isnot(None),
+                ).all()
+            ]
+            access_hashes = dict(
+                db.query(InboxConversation.account_id, InboxConversation.peer_access_hash).filter(
+                    InboxConversation.user_id == user_id,
+                    InboxConversation.account_id.in_(account_ids),
+                    InboxConversation.peer_id == peer_id,
+                ).all()
+            )
+
+        semaphore = asyncio.Semaphore(8)
+
+        async def update_account(account_id: int) -> int | None:
+            client = self.clients.get(account_id)
+            if not client or not client.is_connected():
+                return None
+            try:
+                async with semaphore:
+                    if account_id in access_hashes:
+                        peer = types.InputPeerUser(peer_id, access_hashes[account_id])
+                    elif peer_username:
+                        peer = await client.get_input_entity(peer_username)
+                    else:
+                        return None
+                    request = functions.contacts.BlockRequest if blocked else functions.contacts.UnblockRequest
+                    await client(request(peer))
+                return account_id
+            except Exception:
+                logger.exception("Contact block sync failed for account %s", account_id)
+                return None
+
+        results = await asyncio.gather(*(update_account(account_id) for account_id in account_ids))
+        return {account_id for account_id in results if account_id is not None}, len(account_ids)
 
     async def download_avatar(
         self,

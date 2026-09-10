@@ -198,13 +198,27 @@ async def manage_conversation(
     )
     if action in {"block", "unblock"}:
         try:
-            await inbox_manager.set_blocked(
-                account_id, peer_id, conversation.peer_access_hash, action == "block"
+            successful_ids, connected_count = await inbox_manager.set_blocked_all(
+                current_user.id,
+                peer_id,
+                conversation.peer_username,
+                action == "block",
             )
         except Exception:
-            logger.exception("Telegram block action failed for account %s", account_id)
+            logger.exception("Telegram block sync failed for user %s", current_user.id)
             return RedirectResponse(_inbox_url(view, account_id=account_id, peer_id=peer_id, error="action_failed"), status_code=303)
-        conversation.is_blocked = action == "block"
+        if not successful_ids:
+            return RedirectResponse(_inbox_url(view, account_id=account_id, peer_id=peer_id, error="action_failed"), status_code=303)
+        db.query(InboxConversation).filter(
+            InboxConversation.user_id == current_user.id,
+            InboxConversation.peer_id == peer_id,
+            InboxConversation.account_id.in_(successful_ids),
+        ).update({InboxConversation.is_blocked: action == "block"}, synchronize_session=False)
+        db.commit()
+        notice = "blocked_all" if len(successful_ids) == connected_count else "blocked_partial"
+        if action == "unblock":
+            notice = "unblocked_all" if len(successful_ids) == connected_count else "unblocked_partial"
+        return RedirectResponse(_inbox_url(view, account_id=account_id, peer_id=peer_id, notice=notice), status_code=303)
     elif action == "archive":
         conversation.is_archived = True
         messages.update({InboxMessage.is_read: True}, synchronize_session=False)

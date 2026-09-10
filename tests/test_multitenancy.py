@@ -507,10 +507,13 @@ class TenantIsolationTests(unittest.TestCase):
         )
         self.assertNotIn("account_id", unread.headers["location"])
 
-        with patch("app.routers.inbox.inbox_manager.set_blocked", AsyncMock()) as blocker:
+        with patch(
+            "app.routers.inbox.inbox_manager.set_blocked_all",
+            AsyncMock(return_value=({self.owner_account_id}, 1)),
+        ) as blocker:
             response = self.client.post("/inbox/conversation/block", data=form)
         self.assertEqual(response.status_code, 200)
-        blocker.assert_awaited_once()
+        blocker.assert_awaited_once_with(self.owner_id, peer_id, None, True)
 
         selected = self.client.get(
             f"/inbox?account_id={self.owner_account_id}&peer_id={peer_id}"
@@ -567,6 +570,87 @@ class TenantIsolationTests(unittest.TestCase):
                 InboxConversation.peer_id == peer_id,
             ).delete(synchronize_session=False)
             db.commit()
+
+    def test_block_and_unblock_contact_use_every_connected_owner_account(self):
+        peer_id = 9292
+        with SessionLocal() as db:
+            second_account = TelegramAccount(
+                user_id=self.owner_id,
+                label="Second Block Account",
+                phone="+629292929292",
+                session_str="second-block-session",
+                api_id=92,
+                api_hash="second-block-hash",
+                is_active=1,
+            )
+            db.add(second_account)
+            db.flush()
+            db.add(InboxConversation(
+                user_id=self.owner_id,
+                account_id=self.owner_account_id,
+                peer_id=peer_id,
+                peer_access_hash=929292,
+                peer_name="Shared Block Contact",
+                peer_username="shared_block_contact",
+            ))
+            db.commit()
+            second_account_id = second_account.id
+
+        class FakeClient:
+            def __init__(self, access_hash):
+                self.access_hash = access_hash
+                self.requests = []
+                self.resolved = []
+
+            def is_connected(self):
+                return True
+
+            async def get_input_entity(self, username):
+                self.resolved.append(username)
+                return types.InputPeerUser(peer_id, self.access_hash)
+
+            async def __call__(self, request):
+                self.requests.append(request)
+
+        first_client = FakeClient(929292)
+        second_client = FakeClient(929293)
+        other_client = FakeClient(929294)
+        try:
+            with patch.object(inbox_manager, "clients", {
+                self.owner_account_id: first_client,
+                second_account_id: second_client,
+                self.other_account_id: other_client,
+            }):
+                blocked_ids, blocked_total = asyncio.run(
+                    inbox_manager.set_blocked_all(
+                        self.owner_id, peer_id, "shared_block_contact", True
+                    )
+                )
+                unblocked_ids, unblocked_total = asyncio.run(
+                    inbox_manager.set_blocked_all(
+                        self.owner_id, peer_id, "shared_block_contact", False
+                    )
+                )
+            self.assertEqual(blocked_ids, {self.owner_account_id, second_account_id})
+            self.assertEqual(unblocked_ids, blocked_ids)
+            self.assertEqual((blocked_total, unblocked_total), (2, 2))
+            self.assertEqual(second_client.resolved, ["shared_block_contact", "shared_block_contact"])
+            self.assertEqual(
+                [type(request).__name__ for request in first_client.requests],
+                ["BlockRequest", "UnblockRequest"],
+            )
+            self.assertEqual(len(second_client.requests), 2)
+            self.assertEqual(other_client.requests, [])
+        finally:
+            with SessionLocal() as db:
+                db.query(InboxConversation).filter(
+                    InboxConversation.user_id == self.owner_id,
+                    InboxConversation.peer_id == peer_id,
+                ).delete(synchronize_session=False)
+                db.query(TelegramAccount).filter(
+                    TelegramAccount.id == second_account_id
+                ).delete(synchronize_session=False)
+                db.commit()
 
     def test_inbox_listener_stores_the_receiving_account(self):
         with SessionLocal() as db:

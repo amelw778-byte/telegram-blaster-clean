@@ -182,6 +182,10 @@
 {% elif error == 'send_failed' %}<div class="alert alert-error inbox-notice">Pesan gagal dikirim. Periksa kembali status akun Telegram.</div>
 {% elif error == 'blocked' %}<div class="alert alert-error inbox-notice">Kontak sedang diblokir. Buka blokir sebelum membalas.</div>
 {% elif error == 'action_failed' %}<div class="alert alert-error inbox-notice">Aksi Telegram gagal. Pastikan akun masih aktif.</div>
+{% elif notice == 'blocked_all' %}<div class="alert alert-success inbox-notice">Kontak berhasil diblokir di seluruh akun yang terhubung.</div>
+{% elif notice == 'blocked_partial' %}<div class="alert alert-info inbox-notice">Kontak diblokir pada akun yang dapat mengenalinya; sebagian akun tidak dapat memproses kontak ini.</div>
+{% elif notice == 'unblocked_all' %}<div class="alert alert-success inbox-notice">Blokir kontak berhasil dibuka di seluruh akun yang terhubung.</div>
+{% elif notice == 'unblocked_partial' %}<div class="alert alert-info inbox-notice">Blokir dibuka pada akun yang dapat mengenalinya; sebagian akun tidak dapat memproses kontak ini.</div>
 {% elif notice %}<div class="alert alert-success inbox-notice">Perubahan percakapan berhasil disimpan.</div>{% endif %}
 
 <form id="bulk-form" method="post" action="/inbox/conversations/bulk">
