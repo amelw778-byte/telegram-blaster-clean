@@ -483,6 +483,10 @@ class TenantIsolationTests(unittest.TestCase):
             'id="record-button"',
         ):
             self.assertIn(text, inbox.text)
+        self.assertRegex(inbox.text, r'class="menu-action-icon">\s*<svg')
+        self.assertIn('title="Tandai sudah dibaca" aria-label="Tandai sudah dibaca"', inbox.text)
+        self.assertIn("checkbox.checked = !checkbox.checked", inbox.text)
+        self.assertRegex(inbox.text, r'id="emoji-button"[^>]*><svg')
         self.assertNotIn("Grup baru", inbox.text)
         csrf = _csrf_from(inbox.text)
         form = {

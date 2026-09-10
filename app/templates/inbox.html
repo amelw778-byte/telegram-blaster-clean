@@ -8,10 +8,31 @@
 <input type="hidden" name="view" value="{{ view }}">
 {% endmacro %}
 
-{% macro menu_action(action, label, symbol, account_id, peer_id, danger=false, confirm=false, css='') %}
+{% macro action_icon(name) %}
+<svg viewBox="0 0 24 24" aria-hidden="true">
+  {% if name == 'archive' %}<path d="M4 7h16v13H4zM3 3h18v4H3zM9 12h6"></path>
+  {% elif name == 'restore' %}<path d="M4 7h16v13H4zM3 3h18v4H3zM12 16V9m-3 3 3-3 3 3"></path>
+  {% elif name == 'mute' %}<path d="M18 8a6 6 0 0 0-9.7-4.7M6 8c0 7-3 7-3 9h14M10 21h4M3 3l18 18"></path>
+  {% elif name == 'unmute' %}<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"></path>
+  {% elif name == 'pin' %}<path d="m14 4 6 6-3 1-4 4-1 5-2-2-4 4-1-1 4-4-2-2 5-1 4-4z"></path>
+  {% elif name == 'favorite' %}<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"></path>
+  {% elif name == 'read' %}<path d="m3 12 4 4 8-9M13 15l2 2 6-7"></path>
+  {% elif name == 'unread' %}<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m3 7 9 6 9-6"></path>
+  {% elif name == 'select' %}<rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="m8 12 3 3 6-7"></path>
+  {% elif name == 'list' %}<path d="M9 6h11M9 12h11M9 18h7M4 6h.01M4 12h.01M4 18h.01M19 16v5M16.5 18.5h5"></path>
+  {% elif name == 'block' %}<circle cx="12" cy="12" r="9"></circle><path d="m6 6 12 12"></path>
+  {% elif name == 'clear' %}<path d="m3 15 9-9 6 6-9 9H3zM10 19h11M9 9l6 6"></path>
+  {% elif name == 'delete' %}<path d="M4 7h16M9 11v6M15 11v6M6 7l1 13h10l1-13M9 7l1-3h4l1 3"></path>
+  {% elif name == 'starred' %}<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"></path>
+  {% elif name == 'close' %}<path d="m6 6 12 12M18 6 6 18"></path>
+  {% endif %}
+</svg>
+{% endmacro %}
+
+{% macro menu_action(action, label, icon, account_id, peer_id, danger=false, confirm=false, css='') %}
 <form method="post" action="/inbox/conversation/{{ action }}" class="{{ css }}"{% if confirm %} onsubmit="return confirm('Tindakan ini tidak dapat dibatalkan. Lanjutkan?')"{% endif %}>
   {{ fields(account_id, peer_id) }}
-  <button class="menu-action{% if danger %} danger{% endif %}" type="submit"><span aria-hidden="true">{{ symbol }}</span>{{ label }}</button>
+  <button class="menu-action{% if danger %} danger{% endif %}" type="submit"><span class="menu-action-icon">{{ action_icon(icon) }}</span>{{ label }}</button>
 </form>
 {% endmacro %}
 
@@ -65,20 +86,26 @@
   .select-check { display:none; margin-left:13px; }
   .select-check input { width:18px; height:18px; accent-color:var(--primary); }
   .selecting .select-check { display:block; }
-  .selecting .conversation-link { grid-template-columns:49px minmax(0,1fr); padding-left:8px; }
+  .selecting .conversation-link { grid-template-columns:49px minmax(0,1fr); padding-left:8px; cursor:pointer; }
+  .selecting .conversation-item:has(.select-check input:checked) { background:rgba(99,102,241,.2); box-shadow:inset 3px 0 var(--primary-light); }
   .selecting .row-menu-button { display:none; }
   .bulk-toolbar { display:none; min-height:62px; align-items:center; gap:5px; padding:0 9px; border-bottom:1px solid var(--border); background:var(--bg-soft); }
   .selecting .pane-top { display:none; }
   .selecting .bulk-toolbar { display:flex; }
   .bulk-count { flex:1; margin-left:5px; color:#eef2f7; font-size:.75rem; font-weight:600; }
-  .bulk-toolbar button:disabled { opacity:.35; }
+  .bulk-toolbar .icon-button { border:1px solid transparent; border-radius:10px; }
+  .bulk-toolbar .icon-button:not(:disabled):hover { border-color:rgba(129,140,248,.3); background:rgba(99,102,241,.2); }
+  .bulk-toolbar .icon-button[value="delete"] { color:#fca5a5; }
+  .bulk-toolbar button:disabled { opacity:.35; cursor:not-allowed; }
   .popup-menu { position:absolute; z-index:40; top:52px; right:10px; width:225px; padding:7px; border:1px solid var(--border); border-radius:10px; background:#160d36; box-shadow:0 14px 38px rgba(0,0,0,.5); }
   .conversation-menu { position:fixed; top:auto; right:auto; width:236px; }
   .popup-menu[hidden] { display:none; }
   .menu-action { width:100%; display:flex; align-items:center; gap:11px; padding:9px 10px; border:0; border-radius:7px; color:#e4e8ec; background:transparent; font-size:.69rem; text-align:left; }
   .menu-action:hover { background:rgba(99,102,241,.2); }
-  .menu-action > span { width:18px; color:#b9c2cc; font-size:.9rem; text-align:center; }
+  .menu-action-icon { width:20px; height:20px; display:grid; flex:0 0 auto; place-items:center; color:#b9c2cc; }
+  .menu-action-icon svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
   .menu-action.danger { color:#ffaaa9; }
+  .menu-action.danger .menu-action-icon { color:#ff8f8c; }
   .menu-separator { height:1px; margin:5px 7px; background:var(--border); }
   .global-menu form, .conversation-menu form, .chat-menu form { margin:0; }
 
@@ -119,7 +146,10 @@
   .reply-form { display:flex; align-items:flex-end; gap:3px; }
   .reply-form textarea { min-height:42px; max-height:120px; flex:1; padding:11px 12px; border:0; border-radius:9px; outline:0; resize:none; color:#f1f5f9; background:var(--surface-2); font-size:.72rem; line-height:1.4; box-shadow:none; }
   .reply-form textarea:focus { border:0; background:rgba(99,102,241,.14); box-shadow:0 0 0 1px var(--border-hover); }
-  .composer-button { flex:0 0 auto; }
+  .composer-button { flex:0 0 auto; border:1px solid transparent; color:#b9c4d3; }
+  .composer-button:hover { border-color:rgba(129,140,248,.26); color:#fff; background:rgba(99,102,241,.2); }
+  .reply-form .composer-button[type="submit"] { color:#fff; background:linear-gradient(135deg,var(--primary),var(--secondary)); box-shadow:0 5px 16px rgba(99,102,241,.28); }
+  .reply-form .composer-button[type="submit"]:hover { background:linear-gradient(135deg,var(--primary-light),var(--secondary)); }
   .composer-button.recording { color:#ff7b78; background:#442828; }
   .emoji-panel { position:absolute; z-index:25; left:48px; bottom:62px; width:230px; display:grid; grid-template-columns:repeat(6,1fr); gap:3px; padding:9px; border:1px solid var(--border); border-radius:10px; background:#160d36; box-shadow:0 12px 30px rgba(0,0,0,.45); }
   .emoji-panel[hidden] { display:none; }
@@ -172,22 +202,22 @@
         </button>
       </div>
       <div class="popup-menu global-menu" id="global-menu" hidden>
-        <a class="menu-action" href="/inbox?view=starred"><span>☆</span>Pesan berbintang</a>
-        <button class="menu-action" type="button" id="select-conversations"><span>☑</span>Pilih obrolan</button>
+        <a class="menu-action" href="/inbox?view=starred"><span class="menu-action-icon">{{ action_icon('starred') }}</span>Pesan berbintang</a>
+        <button class="menu-action" type="button" id="select-conversations"><span class="menu-action-icon">{{ action_icon('select') }}</span>Pilih obrolan</button>
         <form method="post" action="/inbox/read-all">
           <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
-          <button class="menu-action" type="submit"><span>✓</span>Tandai semua sudah dibaca</button>
+          <button class="menu-action" type="submit"><span class="menu-action-icon">{{ action_icon('read') }}</span>Tandai semua sudah dibaca</button>
         </form>
       </div>
     </header>
 
     <div class="bulk-toolbar">
-      <button class="icon-button" type="button" id="cancel-selection" aria-label="Batalkan pilihan">×</button>
+      <button class="icon-button" type="button" id="cancel-selection" title="Batalkan pilihan" aria-label="Batalkan pilihan">{{ action_icon('close') }}</button>
       <span class="bulk-count"><span id="selected-count">0</span> dipilih</span>
-      <button class="icon-button" form="bulk-form" name="action" value="read" type="submit" title="Tandai sudah dibaca" disabled>✓</button>
-      <button class="icon-button" form="bulk-form" name="action" value="mute" type="submit" title="Bisukan notifikasi" disabled>♩</button>
-      <button class="icon-button" form="bulk-form" name="action" value="archive" type="submit" title="Arsipkan" disabled>▣</button>
-      <button class="icon-button" form="bulk-form" name="action" value="delete" type="submit" title="Hapus" disabled>⌫</button>
+      <button class="icon-button" form="bulk-form" name="action" value="read" type="submit" title="Tandai sudah dibaca" aria-label="Tandai sudah dibaca" disabled>{{ action_icon('read') }}</button>
+      <button class="icon-button" form="bulk-form" name="action" value="mute" type="submit" title="Bisukan notifikasi" aria-label="Bisukan notifikasi" disabled>{{ action_icon('mute') }}</button>
+      <button class="icon-button" form="bulk-form" name="action" value="archive" type="submit" title="Arsipkan" aria-label="Arsipkan" disabled>{{ action_icon('archive') }}</button>
+      <button class="icon-button" form="bulk-form" name="action" value="delete" type="submit" title="Hapus" aria-label="Hapus" disabled>{{ action_icon('delete') }}</button>
     </div>
 
     <div class="quick-search">
@@ -217,18 +247,18 @@
             </span>
           </span>
         </a>
-        <button class="icon-button row-menu-button" type="button" data-menu-toggle="conversation-menu-{{ state.id }}" aria-label="Menu {{ item.peer_name }}" aria-expanded="false">⌄</button>
+        <button class="icon-button row-menu-button" type="button" data-menu-toggle="conversation-menu-{{ state.id }}" aria-label="Menu {{ item.peer_name }}" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"></path></svg></button>
         <div class="popup-menu conversation-menu" id="conversation-menu-{{ state.id }}" hidden>
-          {{ menu_action('restore' if state.is_archived else 'archive', 'Kembalikan ke Inbox' if state.is_archived else 'Arsipkan chat', '▣', item.account_id, item.peer_id) }}
-          {{ menu_action('unmute' if state.is_muted else 'mute', 'Bunyikan notifikasi' if state.is_muted else 'Bisukan notifikasi', '♩', item.account_id, item.peer_id) }}
-          {{ menu_action('unpin' if state.is_pinned else 'pin', 'Lepas sematan' if state.is_pinned else 'Sematkan chat', '⌖', item.account_id, item.peer_id) }}
-          {{ menu_action('unread', 'Tandai belum dibaca', '◉', item.account_id, item.peer_id) }}
-          {{ menu_action('unfavorite' if state.is_favorite else 'favorite', 'Hapus dari favorit' if state.is_favorite else 'Tambah ke favorit', '☆', item.account_id, item.peer_id) }}
-          {{ menu_action('list', 'Tambahkan ke daftar', '☷', item.account_id, item.peer_id, css='list-action') }}
+          {{ menu_action('restore' if state.is_archived else 'archive', 'Kembalikan ke Inbox' if state.is_archived else 'Arsipkan chat', 'restore' if state.is_archived else 'archive', item.account_id, item.peer_id) }}
+          {{ menu_action('unmute' if state.is_muted else 'mute', 'Bunyikan notifikasi' if state.is_muted else 'Bisukan notifikasi', 'unmute' if state.is_muted else 'mute', item.account_id, item.peer_id) }}
+          {{ menu_action('unpin' if state.is_pinned else 'pin', 'Lepas sematan' if state.is_pinned else 'Sematkan chat', 'pin', item.account_id, item.peer_id) }}
+          {{ menu_action('unread', 'Tandai belum dibaca', 'unread', item.account_id, item.peer_id) }}
+          {{ menu_action('unfavorite' if state.is_favorite else 'favorite', 'Hapus dari favorit' if state.is_favorite else 'Tambah ke favorit', 'favorite', item.account_id, item.peer_id) }}
+          {{ menu_action('list', 'Tambahkan ke daftar', 'list', item.account_id, item.peer_id, css='list-action') }}
           <div class="menu-separator"></div>
-          {{ menu_action('unblock' if state.is_blocked else 'block', 'Buka blokir' if state.is_blocked else 'Blokir kontak', '⊘', item.account_id, item.peer_id, danger=not state.is_blocked, confirm=not state.is_blocked) }}
-          {{ menu_action('clear', 'Bersihkan obrolan', '⊖', item.account_id, item.peer_id, confirm=true) }}
-          {{ menu_action('delete', 'Hapus obrolan', '⌫', item.account_id, item.peer_id, danger=true, confirm=true) }}
+          {{ menu_action('unblock' if state.is_blocked else 'block', 'Buka blokir' if state.is_blocked else 'Blokir kontak', 'block', item.account_id, item.peer_id, danger=not state.is_blocked, confirm=not state.is_blocked) }}
+          {{ menu_action('clear', 'Bersihkan obrolan', 'clear', item.account_id, item.peer_id, confirm=true) }}
+          {{ menu_action('delete', 'Hapus obrolan', 'delete', item.account_id, item.peer_id, danger=true, confirm=true) }}
         </div>
       </article>
       {% else %}
@@ -251,13 +281,13 @@
         <button class="icon-button" type="button" data-menu-toggle="chat-menu" aria-label="Menu percakapan" aria-expanded="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg></button>
       </div>
       <div class="popup-menu chat-menu" id="chat-menu" hidden>
-        {{ menu_action('unmute' if selected.is_muted else 'mute', 'Bunyikan notifikasi' if selected.is_muted else 'Bisukan notifikasi', '♩', selected.account_id, selected.peer_id) }}
-        {{ menu_action('unpin' if selected.is_pinned else 'pin', 'Lepas sematan' if selected.is_pinned else 'Sematkan chat', '⌖', selected.account_id, selected.peer_id) }}
-        {{ menu_action('unfavorite' if selected.is_favorite else 'favorite', 'Hapus dari favorit' if selected.is_favorite else 'Tambah ke favorit', '☆', selected.account_id, selected.peer_id) }}
-        {{ menu_action('unblock' if selected.is_blocked else 'block', 'Buka blokir' if selected.is_blocked else 'Blokir kontak', '⊘', selected.account_id, selected.peer_id, danger=not selected.is_blocked, confirm=not selected.is_blocked) }}
+        {{ menu_action('unmute' if selected.is_muted else 'mute', 'Bunyikan notifikasi' if selected.is_muted else 'Bisukan notifikasi', 'unmute' if selected.is_muted else 'mute', selected.account_id, selected.peer_id) }}
+        {{ menu_action('unpin' if selected.is_pinned else 'pin', 'Lepas sematan' if selected.is_pinned else 'Sematkan chat', 'pin', selected.account_id, selected.peer_id) }}
+        {{ menu_action('unfavorite' if selected.is_favorite else 'favorite', 'Hapus dari favorit' if selected.is_favorite else 'Tambah ke favorit', 'favorite', selected.account_id, selected.peer_id) }}
+        {{ menu_action('unblock' if selected.is_blocked else 'block', 'Buka blokir' if selected.is_blocked else 'Blokir kontak', 'block', selected.account_id, selected.peer_id, danger=not selected.is_blocked, confirm=not selected.is_blocked) }}
         <div class="menu-separator"></div>
-        {{ menu_action('clear', 'Bersihkan obrolan', '⊖', selected.account_id, selected.peer_id, confirm=true) }}
-        {{ menu_action('delete', 'Hapus obrolan', '⌫', selected.account_id, selected.peer_id, danger=true, confirm=true) }}
+        {{ menu_action('clear', 'Bersihkan obrolan', 'clear', selected.account_id, selected.peer_id, confirm=true) }}
+        {{ menu_action('delete', 'Hapus obrolan', 'delete', selected.account_id, selected.peer_id, danger=true, confirm=true) }}
       </div>
     </header>
     <div class="chat-search-bar" id="chat-search-bar"><input id="chat-search" type="search" placeholder="Cari pesan dalam percakapan…"><button class="icon-button" type="button" id="chat-search-close" aria-label="Tutup pencarian">×</button></div>
@@ -288,11 +318,11 @@
         {{ fields(selected.account_id, selected.peer_id) }}
         <input type="hidden" name="voice_note" id="voice-note" value="false">
         <input type="file" name="attachment" id="attachment-input" hidden>
-        <button class="icon-button composer-button" type="button" id="attachment-button" aria-label="Lampirkan file"><svg viewBox="0 0 24 24"><path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.6 9.6a2 2 0 0 1-2.8-2.8l8.9-8.9"></path></svg></button>
-        <button class="icon-button composer-button" type="button" id="emoji-button" aria-label="Pilih emoji">☺</button>
+        <button class="icon-button composer-button" type="button" id="attachment-button" title="Lampirkan file" aria-label="Lampirkan file"><svg viewBox="0 0 24 24"><path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.6 9.6a2 2 0 0 1-2.8-2.8l8.9-8.9"></path></svg></button>
+        <button class="icon-button composer-button" type="button" id="emoji-button" title="Pilih emoji" aria-label="Pilih emoji"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"></path></svg></button>
         <textarea name="body" rows="1" maxlength="4096" placeholder="Ketik pesan" aria-label="Pesan"></textarea>
-        <button class="icon-button composer-button" type="button" id="record-button" aria-label="Rekam pesan suara"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0M12 17v4M9 21h6"></path></svg></button>
-        <button class="icon-button composer-button" type="submit" aria-label="Kirim pesan"><svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg></button>
+        <button class="icon-button composer-button" type="button" id="record-button" title="Rekam pesan suara" aria-label="Rekam pesan suara"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0M12 17v4M9 21h6"></path></svg></button>
+        <button class="icon-button composer-button" type="submit" title="Kirim pesan" aria-label="Kirim pesan"><svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg></button>
       </form>
       <div class="emoji-panel" id="emoji-panel" hidden>{% for emoji in ['😀','😂','🥰','😍','😊','🙏','👍','🔥','❤️','🎉','✅','🤝','😎','🤔','😢','😅','💯','📌'] %}<button type="button">{{ emoji }}</button>{% endfor %}</div>
     </div>
@@ -355,6 +385,13 @@ function updateSelection() {
 document.getElementById('select-conversations')?.addEventListener('click', () => { shell.classList.add('selecting'); closeMenus(); });
 document.getElementById('cancel-selection')?.addEventListener('click', () => { shell.classList.remove('selecting'); checkboxes.forEach((item) => item.checked = false); updateSelection(); });
 checkboxes.forEach((item) => item.addEventListener('change', updateSelection));
+document.querySelectorAll('.conversation-link').forEach((link) => link.addEventListener('click', (event) => {
+  if (!shell.classList.contains('selecting')) return;
+  event.preventDefault();
+  const checkbox = link.closest('.conversation-item').querySelector('[name="conversation_keys"]');
+  checkbox.checked = !checkbox.checked;
+  checkbox.dispatchEvent(new Event('change', {bubbles:true}));
+}));
 
 document.querySelectorAll('.list-action').forEach((form) => form.addEventListener('submit', (event) => {
   const label = prompt('Nama daftar (kosongkan untuk menghapus):', 'Pelanggan prioritas');
