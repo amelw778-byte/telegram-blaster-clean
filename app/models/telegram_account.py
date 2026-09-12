@@ -14,4 +14,6 @@ class TelegramAccount(Base):
     api_id      = Column(Integer, nullable=False)
     api_hash    = Column(EncryptedText, nullable=False)
     is_active   = Column(Integer, default=0)             # 1 = akun yang sedang dipakai
+    blast_available_at = Column(DateTime, nullable=True) # cooldown FloodWait/PeerFlood
+    last_blast_sent_at = Column(DateTime, nullable=True) # interval tetap berlaku lintas job/restart
     created_at  = Column(DateTime, default=datetime.utcnow)

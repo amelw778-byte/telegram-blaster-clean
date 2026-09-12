@@ -40,6 +40,7 @@ from app.routers import scraper  # noqa: E402
 from app.routers.telegram import _normalize_delay_range, _normalize_username  # noqa: E402
 from app.services.blast_manager import blast_manager  # noqa: E402
 from app.services.inbox_manager import inbox_manager  # noqa: E402
+from app.services.sheet_blaster import SheetBlaster  # noqa: E402
 from app.template_utils import jakarta_time  # noqa: E402
 
 
@@ -324,6 +325,54 @@ class TenantIsolationTests(unittest.TestCase):
                 db.query(BlastJob).filter(BlastJob.id == job_id).delete()
                 db.commit()
 
+    def test_sheet_results_sync_immediately_and_account_cooldown_is_persisted(self):
+        with SessionLocal() as db:
+            job = BlastJob(
+                user_id=self.owner_id,
+                source="sheet",
+                status="running",
+                message="sheet test",
+                accounts_json=json.dumps([self.owner_account_id]),
+                total_count=1,
+            )
+            db.add(job)
+            db.flush()
+            recipient = BlastRecipient(
+                job_id=job.id,
+                account_id=self.owner_account_id,
+                sheet_item_id="sheet-test-item",
+                username="sheet_test_target",
+                normalized_username="sheet_test_target",
+                status="sent",
+            )
+            db.add(recipient)
+            db.commit()
+            job_id = job.id
+
+        response = SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"ok": True},
+        )
+        client = SimpleNamespace(post=AsyncMock(return_value=response))
+        worker = SheetBlaster()
+        worker.url = "https://example.invalid/exec"
+        worker.secret = "test-secret"
+        try:
+            with SessionLocal() as db:
+                job = db.get(BlastJob, job_id)
+                self.assertTrue(asyncio.run(worker._sync_results(client, db, job, final=False)))
+                self.assertIsNotNone(job.recipients[0].sheet_synced_at)
+            blast_manager._set_account_cooldown(self.owner_account_id, 60)
+            with SessionLocal() as db:
+                account = db.get(TelegramAccount, self.owner_account_id)
+                self.assertGreater(account.blast_available_at, datetime.utcnow())
+        finally:
+            with SessionLocal() as db:
+                db.query(BlastJob).filter(BlastJob.id == job_id).delete()
+                account = db.get(TelegramAccount, self.owner_account_id)
+                account.blast_available_at = None
+                db.commit()
+
     def test_completed_recipient_updates_job_counts_without_full_recount(self):
         with SessionLocal() as db:
             job = BlastJob(
@@ -355,10 +404,14 @@ class TenantIsolationTests(unittest.TestCase):
             )
             with SessionLocal() as db:
                 job = db.get(BlastJob, job_id)
+                account = db.get(TelegramAccount, self.owner_account_id)
                 self.assertEqual((job.sent_count, job.pending_count), (1, 0))
+                self.assertIsNotNone(account.last_blast_sent_at)
         finally:
             with SessionLocal() as db:
                 db.query(BlastJob).filter(BlastJob.id == job_id).delete()
+                account = db.get(TelegramAccount, self.owner_account_id)
+                account.last_blast_sent_at = None
                 db.commit()
 
     def test_header_does_not_render_profile_summary(self):

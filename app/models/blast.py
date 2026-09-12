@@ -62,6 +62,7 @@ class BlastRecipient(Base):
     job_id = Column(Integer, ForeignKey("blast_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     account_id = Column(Integer, ForeignKey("telegram_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     sheet_item_id = Column(String(64), nullable=True, unique=True, index=True)
+    sheet_synced_at = Column(DateTime, nullable=True)
 
     username = Column(String(255), nullable=False)
     normalized_username = Column(String(255), nullable=False)

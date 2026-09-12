@@ -149,10 +149,35 @@ def _upgrade_sheet_blast_schema() -> None:
                 connection.execute(text(
                     "ALTER TABLE blast_recipients ADD COLUMN sheet_item_id VARCHAR(64)"
                 ))
+            if "sheet_synced_at" not in columns:
+                connection.execute(text(
+                    "ALTER TABLE blast_recipients ADD COLUMN sheet_synced_at TIMESTAMP"
+                ))
             connection.execute(text(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ix_blast_recipients_sheet_item_id "
                 "ON blast_recipients (sheet_item_id)"
             ))
+
+        if "telegram_accounts" in tables:
+            columns = {
+                column["name"] for column in inspect(engine).get_columns("telegram_accounts")
+            }
+            if "blast_available_at" not in columns:
+                connection.execute(text(
+                    "ALTER TABLE telegram_accounts ADD COLUMN blast_available_at TIMESTAMP"
+                ))
+            if "last_blast_sent_at" not in columns:
+                connection.execute(text(
+                    "ALTER TABLE telegram_accounts ADD COLUMN last_blast_sent_at TIMESTAMP"
+                ))
+            if "blast_recipients" in tables:
+                connection.execute(text(
+                    "UPDATE telegram_accounts SET last_blast_sent_at = ("
+                    "SELECT MAX(sent_at) FROM blast_recipients "
+                    "WHERE blast_recipients.account_id = telegram_accounts.id "
+                    "AND blast_recipients.status = 'sent'"
+                    ") WHERE last_blast_sent_at IS NULL"
+                ))
 
 
 def _backfill_inbox_conversations() -> None:

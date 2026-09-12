@@ -4,14 +4,16 @@ import os
 from datetime import datetime, timedelta
 
 import httpx
+from sqlalchemy import or_
 
 from app.database import SessionLocal
 from app.models import BlastJob, BlastRecipient, TelegramAccount, User
-from app.routers.telegram import MAX_RECIPIENTS_PER_JOB, _normalize_delay_range, _normalize_username
+from app.routers.telegram import _normalize_delay_range, _normalize_username
 from app.services.blast_manager import blast_manager
 
 
 TERMINAL_STATES = {"completed", "partial", "failed"}
+SHEET_BATCH_SIZE = max(1, int(os.getenv("SHEET_BLAST_BATCH_SIZE", "500")))
 
 
 class SheetBlaster:
@@ -44,7 +46,8 @@ class SheetBlaster:
                     raise
                 except Exception as exc:
                     print(f"Sheet blaster menunggu setelah gagal sinkron: {exc}")
-                await asyncio.sleep(self.poll_seconds)
+                    changed = False
+                await asyncio.sleep(1 if changed else self.poll_seconds)
 
     async def sync_once(self, client):
         with SessionLocal() as db:
@@ -53,7 +56,7 @@ class SheetBlaster:
                 User.is_active.is_(True),
             ).first()
             if not user:
-                return
+                return False
 
             job = db.query(BlastJob).filter(
                 BlastJob.user_id == user.id,
@@ -61,27 +64,19 @@ class SheetBlaster:
                 BlastJob.sheet_synced_at.is_(None),
             ).order_by(BlastJob.created_at).first()
 
-            if job and job.status in TERMINAL_STATES:
-                results = [
-                    {
-                        "id": row.sheet_item_id,
-                        "status": row.status,
-                        "error": row.error or "",
-                        "message": job.message,
-                        "interval": job.delay_seconds,
-                    }
-                    for row in job.recipients if row.sheet_item_id
-                ]
-                response = await client.post(
-                    self.url,
-                    json={"secret": self.secret, "action": "finish", "results": results},
-                )
-                response.raise_for_status()
-                if response.json().get("ok") is not True:
-                    raise RuntimeError("Apps Script tidak mengonfirmasi sinkronisasi")
-                job.sheet_synced_at = datetime.utcnow()
-                db.commit()
-                return
+            if job:
+                final = job.status in TERMINAL_STATES
+                changed = await self._sync_results(client, db, job, final=final)
+                if final:
+                    remaining = db.query(BlastRecipient.id).filter(
+                        BlastRecipient.job_id == job.id,
+                        BlastRecipient.sheet_item_id.isnot(None),
+                        BlastRecipient.sheet_synced_at.is_(None),
+                    ).first()
+                    if not remaining:
+                        job.sheet_synced_at = datetime.utcnow()
+                        db.commit()
+                    return True
 
             if job and job.status == "paused":
                 age = datetime.utcnow() - (job.completed_at or job.created_at)
@@ -94,28 +89,65 @@ class SheetBlaster:
                     job.completed_at = None
                     db.commit()
                     blast_manager.start_job(job.id)
-                return
+                    return True
+                return changed
 
             if job:
-                return
+                return changed
 
             account_ids = [row[0] for row in db.query(TelegramAccount.id).filter(
                 TelegramAccount.user_id == user.id,
                 TelegramAccount.is_active == 1,
                 TelegramAccount.session_str.isnot(None),
+                or_(
+                    TelegramAccount.blast_available_at.is_(None),
+                    TelegramAccount.blast_available_at <= datetime.utcnow(),
+                ),
             ).order_by(TelegramAccount.id)]
             user_id = user.id
             if not account_ids:
-                return
+                return False
 
         response = await client.post(
             self.url,
-            json={"secret": self.secret, "action": "claim", "limit": MAX_RECIPIENTS_PER_JOB},
+            json={"secret": self.secret, "action": "claim", "limit": SHEET_BATCH_SIZE},
         )
         response.raise_for_status()
         rows = response.json().get("items", [])
         if rows:
             await self._create_job(client, user_id, account_ids, rows)
+            return True
+        return False
+
+    async def _sync_results(self, client, db, job, *, final):
+        statuses = ["sent", "failed", "skipped"] if final else ["sent"]
+        rows = db.query(BlastRecipient).filter(
+            BlastRecipient.job_id == job.id,
+            BlastRecipient.sheet_item_id.isnot(None),
+            BlastRecipient.sheet_synced_at.is_(None),
+            BlastRecipient.status.in_(statuses),
+        ).all()
+        if not rows:
+            return False
+        results = [{
+            "id": row.sheet_item_id,
+            "status": row.status,
+            "error": row.error or "",
+            "message": job.message,
+            "interval": job.delay_seconds,
+        } for row in rows]
+        response = await client.post(
+            self.url,
+            json={"secret": self.secret, "action": "finish", "results": results},
+        )
+        response.raise_for_status()
+        if response.json().get("ok") is not True:
+            raise RuntimeError("Apps Script tidak mengonfirmasi sinkronisasi")
+        now = datetime.utcnow()
+        for row in rows:
+            row.sheet_synced_at = now
+        db.commit()
+        return True
 
     async def _create_job(self, client, user_id, account_ids, rows):
         valid = []

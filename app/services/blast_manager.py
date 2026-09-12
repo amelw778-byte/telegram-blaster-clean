@@ -3,12 +3,12 @@ import json
 import os
 import random
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List
 from weakref import WeakValueDictionary
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, PeerFloodError
 from telethon.sessions import StringSession
@@ -21,6 +21,7 @@ from app.services.inbox_manager import inbox_manager
 ACTIVE_JOB_STATES = {"queued", "running"}
 MAX_CONSECUTIVE_FAILURES = 5  # Berhenti per-akun setelah gagal berturut-turut
 MIN_SEND_DELAY_SECONDS = 0.0
+PEER_FLOOD_COOLDOWN_SECONDS = int(os.getenv("PEER_FLOOD_COOLDOWN_SECONDS", "86400"))
 
 
 class BlastManager:
@@ -101,6 +102,10 @@ class BlastManager:
                         TelegramAccount.user_id == job.user_id,
                         TelegramAccount.is_active == 1,
                         TelegramAccount.session_str.isnot(None),
+                        or_(
+                            TelegramAccount.blast_available_at.is_(None),
+                            TelegramAccount.blast_available_at <= datetime.utcnow(),
+                        ),
                     ).all()
                 }
                 available_ids = [account_id for account_id in selected_ids if account_id in valid_ids]
@@ -192,6 +197,10 @@ class BlastManager:
                     or not account.session_str
                     or not job
                     or account.user_id != job.user_id
+                    or (
+                        account.blast_available_at
+                        and account.blast_available_at > datetime.utcnow()
+                    )
                 ):
                     self._pause_many(db, recipient_ids, "Belum dikirim: akun tidak tersedia")
                     self._refresh_counts(db, job_id)
@@ -201,6 +210,7 @@ class BlastManager:
                     "session_str": account.session_str,
                     "api_id": account.api_id,
                     "api_hash": account.api_hash,
+                    "last_blast_sent_at": account.last_blast_sent_at,
                 }
                 message = job.message
                 image_path = job.image_path
@@ -237,6 +247,14 @@ class BlastManager:
                 ids = recipient_ids
                 consecutive_failures = 0
                 account_result = "available"
+
+                last_sent_at = account_snapshot["last_blast_sent_at"]
+                if last_sent_at:
+                    remaining_delay = delay_min - (
+                        datetime.utcnow() - last_sent_at
+                    ).total_seconds()
+                    if remaining_delay > 0:
+                        await asyncio.sleep(remaining_delay)
 
                 for position, recipient_id in enumerate(ids):
                     # ── Cek stop flag ───────────────────────────────────────
@@ -326,6 +344,7 @@ class BlastManager:
             if not job:
                 return "continue"
             user_id = job.user_id
+            account_id = recipient.account_id
 
         target_key = (user_id, target)
         target_lock = self.target_locks.get(target_key)
@@ -379,15 +398,21 @@ class BlastManager:
                 with SessionLocal() as db:
                     recipient = db.get(BlastRecipient, recipient_id)
                     if recipient:
-                        recipient.sent_at = datetime.utcnow()
+                        sent_at = datetime.utcnow()
+                        recipient.sent_at = sent_at
+                        account = db.get(TelegramAccount, account_id)
+                        if account:
+                            account.last_blast_sent_at = sent_at
                         self._finish_recipient(db, job_id, recipient, "sent")
                 return "continue"
 
             except FloodWaitError as exc:
                 secs = exc.seconds
+                self._set_account_cooldown(account_id, secs)
                 self._mark_paused(recipient_id, job_id, f"FloodWait {secs}s — dialihkan ke akun berikutnya")
                 return "floodwait"
             except PeerFloodError:
+                self._set_account_cooldown(account_id, PEER_FLOOD_COOLDOWN_SECONDS)
                 self._mark_paused(recipient_id, job_id, "PeerFlood — dialihkan ke akun berikutnya")
                 return "peerflood"
             except Exception as exc:
@@ -396,6 +421,17 @@ class BlastManager:
                 return "failed"
 
     # ─── Helpers ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _set_account_cooldown(account_id: int | None, seconds: int) -> None:
+        if not account_id:
+            return
+        until = datetime.utcnow() + timedelta(seconds=max(1, seconds))
+        with SessionLocal() as db:
+            account = db.get(TelegramAccount, account_id)
+            if account and (not account.blast_available_at or account.blast_available_at < until):
+                account.blast_available_at = until
+                db.commit()
 
     def _mark_failed(self, recipient_id: int, job_id: int, error: str) -> None:
         with SessionLocal() as db:
