@@ -373,6 +373,23 @@ class TenantIsolationTests(unittest.TestCase):
                 account.blast_available_at = None
                 db.commit()
 
+    def test_sheet_worker_repeats_immediately_after_changes(self):
+        worker = SheetBlaster()
+        worker.sync_once = AsyncMock(return_value=True)
+        client_context = AsyncMock()
+        client_context.__aenter__.return_value = object()
+
+        async def exercise():
+            with (
+                patch("app.services.sheet_blaster.httpx.AsyncClient", return_value=client_context),
+                patch("app.services.sheet_blaster.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)) as sleep,
+            ):
+                with self.assertRaises(asyncio.CancelledError):
+                    await worker._run()
+                sleep.assert_awaited_once_with(1)
+
+        asyncio.run(exercise())
+
     def test_completed_recipient_updates_job_counts_without_full_recount(self):
         with SessionLocal() as db:
             job = BlastJob(

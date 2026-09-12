@@ -41,7 +41,7 @@ class SheetBlaster:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             while True:
                 try:
-                    await self.sync_once(client)
+                    changed = await self.sync_once(client)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
