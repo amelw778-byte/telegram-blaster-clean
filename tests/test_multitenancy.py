@@ -934,7 +934,7 @@ class TenantIsolationTests(unittest.TestCase):
             db.commit()
 
         inbox = self.client.get(
-            f"/inbox?account_id={self.owner_account_id}&peer_id={peer_id}"
+            f"/inbox?account_id={self.owner_account_id}&peer_id={peer_id}&view=unread"
         )
         sender = AsyncMock(return_value=(2, datetime.utcnow()))
         with patch("app.routers.inbox.inbox_manager.send_reply", sender):
@@ -944,12 +944,14 @@ class TenantIsolationTests(unittest.TestCase):
                     "csrf_token": _csrf_from(inbox.text),
                     "account_id": self.owner_account_id,
                     "peer_id": peer_id,
+                    "view": "unread",
                     "body": "Baik, saya bantu.",
                 },
                 follow_redirects=False,
             )
 
         self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/inbox?view=unread")
         sender.assert_awaited_once_with(
             self.owner_account_id,
             peer_id,

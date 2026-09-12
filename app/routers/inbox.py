@@ -357,6 +357,7 @@ def star_message(
 async def reply(
     account_id: int = Form(...),
     peer_id: int = Form(...),
+    view: str = Form("all"),
     body: str = Form(""),
     voice_note: bool = Form(False),
     attachment: UploadFile | None = File(None),
@@ -365,7 +366,12 @@ async def reply(
     _csrf: None = Depends(verify_csrf),
 ):
     body = body.strip()
-    destination = _inbox_url(account_id=account_id, peer_id=peer_id)
+    view = _view(view)
+    destination = _inbox_url(
+        view,
+        account_id=None if view == "unread" else account_id,
+        peer_id=None if view == "unread" else peer_id,
+    )
     has_file = bool(attachment and attachment.filename)
     if (not body and not has_file) or len(body) > 4096:
         return RedirectResponse(f"{destination}&error=invalid_message", status_code=303)
