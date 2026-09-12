@@ -126,6 +126,35 @@ def _upgrade_inbox_schema() -> None:
             ))
 
 
+def _upgrade_sheet_blast_schema() -> None:
+    tables = set(inspect(engine).get_table_names())
+    with engine.begin() as connection:
+        if "blast_jobs" in tables:
+            columns = {column["name"] for column in inspect(engine).get_columns("blast_jobs")}
+            if "source" not in columns:
+                connection.execute(text(
+                    "ALTER TABLE blast_jobs ADD COLUMN source VARCHAR(20) NOT NULL DEFAULT 'manual'"
+                ))
+            if "sheet_synced_at" not in columns:
+                connection.execute(text("ALTER TABLE blast_jobs ADD COLUMN sheet_synced_at TIMESTAMP"))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_blast_jobs_source ON blast_jobs (source)"
+            ))
+
+        if "blast_recipients" in tables:
+            columns = {
+                column["name"] for column in inspect(engine).get_columns("blast_recipients")
+            }
+            if "sheet_item_id" not in columns:
+                connection.execute(text(
+                    "ALTER TABLE blast_recipients ADD COLUMN sheet_item_id VARCHAR(64)"
+                ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_blast_recipients_sheet_item_id "
+                "ON blast_recipients (sheet_item_id)"
+            ))
+
+
 def _backfill_inbox_conversations() -> None:
     with SessionLocal() as db:
         existing = {
@@ -262,6 +291,7 @@ def initialize_database() -> None:
         _encrypt_sqlite_telegram_secrets(DB_PATH)
     else:
         _copy_sqlite_to_postgres(DB_PATH)
+    _upgrade_sheet_blast_schema()
     _upgrade_inbox_schema()
     _backfill_inbox_conversations()
     _bootstrap_and_claim_legacy_rows()

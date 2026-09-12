@@ -40,6 +40,12 @@ DATABASE_URL=postgresql://...
 DATA_ENCRYPTION_KEY=<strong-random-secret>
 # Only while rotating keys; remove after all encrypted rows have been rewritten:
 DATA_ENCRYPTION_KEY_OLD=<previous-key>
+# Optional: automatic Google Sheet queue via google_apps_script/Code.gs
+SHEET_BLAST_WEBAPP_URL=https://script.google.com/macros/s/.../exec
+SHEET_BLAST_SECRET=<strong-random-secret>
+SHEET_BLAST_OWNER=porscy
+SHEET_BLAST_POLL_SECONDS=30
+SHEET_BLAST_RETRY_SECONDS=300
 ```
 
 Existing Telegram data is assigned to `BOOTSTRAP_OWNER_EMAIL` on the first
@@ -50,6 +56,13 @@ Pengguna dapat mendaftar dan masuk menggunakan username/password. Password
 disimpan sebagai hash scrypt dengan salt unik. Google OAuth tetap tersedia
 sebagai opsi ketika kredensialnya dikonfigurasi. Fitur pemulihan password hanya
 aktif setelah konfigurasi SMTP diisi.
+
+Antrean Sheet memakai kolom `Username`, `Pesan`, dan `Interval (detik)`;
+pesan global diisi pada B2 dan interval detik pada C2.
+Salin `google_apps_script/Code.gs` ke Apps Script yang terikat pada spreadsheet,
+atur Script Property `SHEET_BLAST_SECRET`, jalankan `siapkan()` sekali, lalu
+deploy sebagai Web App. Baris terkirim dipindahkan ke tab `Selesai`; baris gagal
+tetap di `Blast Otomatis` dan dicoba lagi.
 
 `session_str` dan `api_hash` Telegram dienkripsi menggunakan Fernet sebelum
 masuk database. Sesi web dicatat di tabel `device_sessions`, sehingga pengguna

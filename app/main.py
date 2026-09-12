@@ -55,6 +55,7 @@ async def authentication_required(request: Request, _exc: AuthenticationRequired
 
 
 from app.routers import auth, dashboard, inbox, scraper, security, telegram
+from app.services.sheet_blaster import sheet_blaster
 
 app.include_router(auth.router)
 app.include_router(dashboard.router)
@@ -68,10 +69,12 @@ app.include_router(security.router)
 async def resume_jobs_after_restart():
     await inbox_manager.start_all()
     await blast_manager.resume_incomplete_jobs()
+    sheet_blaster.start()
 
 
 @app.on_event("shutdown")
 async def disconnect_inbox_accounts():
+    await sheet_blaster.shutdown()
     await inbox_manager.shutdown()
 
 
