@@ -1038,6 +1038,109 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
         sender.assert_awaited_once_with(second_account_id, 808, 8008, "Balasan akun kedua")
 
+    def test_special_auto_reply_is_configurable_and_scoped_per_account(self):
+        page = self.client.get("/special")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Fitur Spesial", page.text)
+        response = self.client.post(
+            "/special/auto-reply",
+            data={
+                "csrf_token": _csrf_from(page.text),
+                "enabled": "true",
+                "message": "Halo, pesanmu sudah kami terima.",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+
+        with SessionLocal() as db:
+            owner = db.get(User, self.owner_id)
+            self.assertTrue(owner.auto_reply_enabled)
+            second_account = TelegramAccount(
+                user_id=self.owner_id,
+                label="Auto Reply Account B",
+                phone="+620000000004",
+                session_str="auto-reply-session",
+                api_id=4,
+                api_hash="auto-reply-hash",
+                is_active=1,
+            )
+            db.add(second_account)
+            db.commit()
+            db.refresh(second_account)
+            second_account_id = second_account.id
+
+        class FakeEvent:
+            is_private = True
+            raw_text = "Halo"
+
+            def __init__(self, message_id):
+                self.message = SimpleNamespace(
+                    id=message_id,
+                    date=datetime.utcnow(),
+                    media=None,
+                )
+
+            async def get_input_chat(self):
+                return types.InputPeerUser(909, 9009)
+
+            async def get_chat(self):
+                return SimpleNamespace(first_name="Zelza", last_name=None, username="zelza")
+
+        sender = AsyncMock(side_effect=[
+            (901, datetime.utcnow()),
+            (902, datetime.utcnow()),
+            (903, datetime.utcnow()),
+        ])
+        try:
+            with patch.object(inbox_manager, "send_reply", sender):
+                asyncio.run(inbox_manager._store_incoming(self.owner_account_id, FakeEvent(1)))
+                asyncio.run(inbox_manager._store_incoming(self.owner_account_id, FakeEvent(2)))
+                asyncio.run(inbox_manager._store_incoming(second_account_id, FakeEvent(1)))
+                with SessionLocal() as db:
+                    conversation = db.query(InboxConversation).filter(
+                        InboxConversation.account_id == self.owner_account_id,
+                        InboxConversation.peer_id == 909,
+                    ).one()
+                    conversation.auto_replied_at = datetime.utcnow() - timedelta(hours=25)
+                    db.commit()
+                asyncio.run(inbox_manager._store_incoming(self.owner_account_id, FakeEvent(3)))
+
+            self.assertEqual([call.args[0] for call in sender.await_args_list], [
+                self.owner_account_id,
+                second_account_id,
+                self.owner_account_id,
+            ])
+            with SessionLocal() as db:
+                conversations = db.query(InboxConversation).filter(
+                    InboxConversation.user_id == self.owner_id,
+                    InboxConversation.peer_id == 909,
+                ).all()
+                self.assertEqual(len(conversations), 2)
+                self.assertTrue(all(item.auto_replied_at for item in conversations))
+                self.assertEqual(db.query(InboxMessage).filter(
+                    InboxMessage.user_id == self.owner_id,
+                    InboxMessage.peer_id == 909,
+                    InboxMessage.direction == "out",
+                ).count(), 3)
+        finally:
+            with SessionLocal() as db:
+                db.query(InboxMessage).filter(
+                    InboxMessage.user_id == self.owner_id,
+                    InboxMessage.peer_id == 909,
+                ).delete(synchronize_session=False)
+                db.query(InboxConversation).filter(
+                    InboxConversation.user_id == self.owner_id,
+                    InboxConversation.peer_id == 909,
+                ).delete(synchronize_session=False)
+                db.query(TelegramAccount).filter(
+                    TelegramAccount.id == second_account_id,
+                ).delete(synchronize_session=False)
+                owner = db.get(User, self.owner_id)
+                owner.auto_reply_enabled = False
+                owner.auto_reply_message = None
+                db.commit()
+
     def test_inbox_startup_includes_all_connected_accounts(self):
         with (
             patch.dict(os.environ, {"INBOX_LISTENERS_ENABLED": "true", "INBOX_ACCOUNT_ID": ""}),

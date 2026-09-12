@@ -107,23 +107,31 @@ def _upgrade_sqlite_schema() -> None:
 
 
 def _upgrade_inbox_schema() -> None:
-    if "inbox_messages" not in inspect(engine).get_table_names():
-        return
-    columns = {column["name"] for column in inspect(engine).get_columns("inbox_messages")}
-    additions = {
-        "is_archived": "BOOLEAN NOT NULL DEFAULT FALSE",
-        "is_starred": "BOOLEAN NOT NULL DEFAULT FALSE",
-        "media_path": "VARCHAR(500)",
-        "media_name": "VARCHAR(255)",
-        "media_type": "VARCHAR(100)",
-    }
+    tables = set(inspect(engine).get_table_names())
     with engine.begin() as connection:
-        for name, definition in additions.items():
-            if name in columns:
+        additions = {
+            "users": {
+                "auto_reply_enabled": "BOOLEAN NOT NULL DEFAULT FALSE",
+                "auto_reply_message": "TEXT",
+            },
+            "inbox_conversations": {"auto_replied_at": "TIMESTAMP"},
+            "inbox_messages": {
+                "is_archived": "BOOLEAN NOT NULL DEFAULT FALSE",
+                "is_starred": "BOOLEAN NOT NULL DEFAULT FALSE",
+                "media_path": "VARCHAR(500)",
+                "media_name": "VARCHAR(255)",
+                "media_type": "VARCHAR(100)",
+            },
+        }
+        for table, table_additions in additions.items():
+            if table not in tables:
                 continue
-            connection.execute(text(
-                f"ALTER TABLE inbox_messages ADD COLUMN {name} {definition}"
-            ))
+            columns = {column["name"] for column in inspect(engine).get_columns(table)}
+            for name, definition in table_additions.items():
+                if name not in columns:
+                    connection.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
+                    ))
 
 
 def _upgrade_sheet_blast_schema() -> None:

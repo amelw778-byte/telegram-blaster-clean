@@ -54,7 +54,7 @@ async def authentication_required(request: Request, _exc: AuthenticationRequired
     return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
 
-from app.routers import auth, dashboard, inbox, scraper, security, telegram
+from app.routers import auth, dashboard, inbox, scraper, security, special, telegram
 from app.services.sheet_blaster import sheet_blaster
 
 app.include_router(auth.router)
@@ -63,6 +63,7 @@ app.include_router(inbox.router)
 app.include_router(telegram.router)
 app.include_router(scraper.router)
 app.include_router(security.router)
+app.include_router(special.router)
 
 
 @app.on_event("startup")

@@ -28,6 +28,7 @@ class InboxConversation(Base):
     is_favorite = Column(Boolean, nullable=False, default=False)
     is_blocked = Column(Boolean, nullable=False, default=False)
     marked_unread = Column(Boolean, nullable=False, default=False)
+    auto_replied_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 

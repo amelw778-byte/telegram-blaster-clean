@@ -2,7 +2,7 @@ import asyncio
 import logging
 import mimetypes
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
@@ -17,7 +17,7 @@ from telethon.errors import (
 from telethon.sessions import StringSession
 
 from app.database import DB_PATH, SessionLocal
-from app.models import InboxConversation, InboxMessage, TelegramAccount
+from app.models import InboxConversation, InboxMessage, TelegramAccount, User
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,7 @@ PERMANENT_SESSION_ERRORS = (
     UserDeactivatedBanError,
     UserDeactivatedError,
 )
+AUTO_REPLY_COOLDOWN = timedelta(hours=24)
 
 
 class InboxManager:
@@ -248,6 +249,85 @@ class InboxManager:
                 db.commit()
             except IntegrityError:
                 db.rollback()
+                return
+
+        claimed = self._claim_auto_reply(account_id, input_peer.user_id)
+        if not claimed:
+            return
+        auto_reply, claimed_at = claimed
+        try:
+            telegram_message_id, sent_at = await self.send_reply(
+                account_id,
+                input_peer.user_id,
+                input_peer.access_hash,
+                auto_reply,
+            )
+        except Exception:
+            logger.exception("Auto-reply failed for account %s", account_id)
+            with SessionLocal() as db:
+                db.query(InboxConversation).filter(
+                    InboxConversation.account_id == account_id,
+                    InboxConversation.peer_id == input_peer.user_id,
+                    InboxConversation.auto_replied_at == claimed_at,
+                ).update({InboxConversation.auto_replied_at: None})
+                db.commit()
+            return
+
+        with SessionLocal() as db:
+            account = db.get(TelegramAccount, account_id)
+            conversation = db.query(InboxConversation).filter(
+                InboxConversation.account_id == account_id,
+                InboxConversation.peer_id == input_peer.user_id,
+            ).first()
+            if not account or not conversation:
+                return
+            db.add(InboxMessage(
+                user_id=account.user_id,
+                account_id=account_id,
+                peer_id=input_peer.user_id,
+                peer_access_hash=input_peer.access_hash,
+                peer_name=peer_name[:255],
+                peer_username=getattr(peer, "username", None) or None,
+                telegram_message_id=telegram_message_id,
+                direction="out",
+                body=auto_reply,
+                is_read=True,
+                created_at=sent_at,
+            ))
+            if conversation.updated_at < sent_at:
+                conversation.updated_at = sent_at
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+
+    @staticmethod
+    def _claim_auto_reply(account_id: int, peer_id: int) -> tuple[str, datetime] | None:
+        now = datetime.utcnow()
+        with SessionLocal() as db:
+            row = db.query(InboxConversation, User).join(
+                User, User.id == InboxConversation.user_id
+            ).filter(
+                InboxConversation.account_id == account_id,
+                InboxConversation.peer_id == peer_id,
+                InboxConversation.is_blocked.is_(False),
+                User.auto_reply_enabled.is_(True),
+            ).with_for_update().first()
+            if not row:
+                return None
+            conversation, user = row
+            message = (user.auto_reply_message or "").strip()
+            if (
+                not message
+                or (
+                    conversation.auto_replied_at
+                    and conversation.auto_replied_at > now - AUTO_REPLY_COOLDOWN
+                )
+            ):
+                return None
+            conversation.auto_replied_at = now
+            db.commit()
+            return message, now
 
     async def send_reply(
         self,
