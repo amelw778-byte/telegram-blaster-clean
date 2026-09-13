@@ -1,5 +1,7 @@
 from pathlib import Path
+from datetime import datetime
 import os
+import secrets
 import sys
 import types
 from urllib.parse import quote
@@ -19,10 +21,10 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from sqlalchemy import text
+from sqlalchemy import func, or_, text
 
 from app.auth import AuthenticationRequired, session_secret_for_middleware
-from app.database import engine
+from app.database import SessionLocal, engine
 from app.migrations import initialize_database
 from app.models import BlastJob, BlastRecipient, DeviceSession, InboxConversation, InboxMessage, TelegramAccount, User  # noqa: F401
 from app.services.blast_manager import blast_manager
@@ -91,3 +93,38 @@ def healthcheck():
     with engine.connect() as connection:
         connection.execute(text("SELECT 1"))
     return {"status": "ok"}
+
+
+@app.get("/api/office/account-stats", include_in_schema=False)
+def office_account_stats(request: Request):
+    expected = os.getenv("OFFICE_STATS_KEY", "")
+    supplied = request.headers.get("x-office-key", "")
+    if not expected or not secrets.compare_digest(expected, supplied):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+
+    with SessionLocal() as db:
+        office_username = os.getenv("OFFICE_STATS_USERNAME", "").strip().casefold()
+        owner = db.query(User).filter(
+            func.lower(User.username) == office_username
+            if office_username
+            else func.lower(User.email) == os.getenv(
+                "BOOTSTRAP_OWNER_EMAIL", "amelw778@gmail.com"
+            ).strip().casefold()
+        ).first()
+        if not owner:
+            return {"active": 0, "flood": 0, "total": 0}
+
+        accounts = db.query(TelegramAccount).filter(TelegramAccount.user_id == owner.id)
+        connected = accounts.filter(
+            TelegramAccount.is_active == 1,
+            TelegramAccount.session_str.isnot(None),
+        )
+        now = datetime.utcnow()
+        return {
+            "active": connected.filter(or_(
+                TelegramAccount.blast_available_at.is_(None),
+                TelegramAccount.blast_available_at <= now,
+            )).count(),
+            "flood": connected.filter(TelegramAccount.blast_available_at > now).count(),
+            "total": accounts.count(),
+        }

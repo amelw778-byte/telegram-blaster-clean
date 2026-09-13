@@ -23,6 +23,7 @@ os.environ["SESSION_SECRET"] = "test-session-secret-for-porslabs"
 os.environ["DATA_ENCRYPTION_KEY"] = "test-data-encryption-key-for-porslabs"
 os.environ["BOOTSTRAP_OWNER_EMAIL"] = "owner@example.com"
 os.environ["INBOX_LISTENERS_ENABLED"] = "false"
+os.environ["OFFICE_STATS_KEY"] = "office-stats-test-key"
 os.environ.pop("APP_PASSWORD", None)
 os.environ.pop("GOOGLE_CLIENT_ID", None)
 os.environ.pop("GOOGLE_CLIENT_SECRET", None)
@@ -136,6 +137,45 @@ class TenantIsolationTests(unittest.TestCase):
         self.assertIn('id="dashboard-account-search"', response.text)
         self.assertNotIn("Other Secret Account", response.text)
         self.assertNotIn("other secret job", response.text)
+
+    def test_office_account_stats_are_protected_and_owner_only(self):
+        self.owner_account.blast_available_at = datetime.utcnow() + timedelta(hours=1)
+        with SessionLocal() as db:
+            account = db.get(TelegramAccount, self.owner_account_id)
+            account.blast_available_at = self.owner_account.blast_available_at
+            db.commit()
+        try:
+            self.assertEqual(self.client.get("/api/office/account-stats").status_code, 404)
+            with SessionLocal() as db:
+                owner_accounts = db.query(TelegramAccount).filter(
+                    TelegramAccount.user_id == self.owner_id
+                )
+                expected = {
+                    "active": owner_accounts.filter(
+                        TelegramAccount.is_active == 1,
+                        TelegramAccount.session_str.isnot(None),
+                        (TelegramAccount.blast_available_at.is_(None))
+                        | (TelegramAccount.blast_available_at <= datetime.utcnow()),
+                    ).count(),
+                    "flood": owner_accounts.filter(
+                        TelegramAccount.is_active == 1,
+                        TelegramAccount.session_str.isnot(None),
+                        TelegramAccount.blast_available_at > datetime.utcnow(),
+                    ).count(),
+                    "total": owner_accounts.count(),
+                }
+                all_accounts = db.query(TelegramAccount).count()
+            response = self.client.get(
+                "/api/office/account-stats",
+                headers={"x-office-key": "office-stats-test-key"},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), expected)
+            self.assertLess(expected["total"], all_accounts)
+        finally:
+            with SessionLocal() as db:
+                db.get(TelegramAccount, self.owner_account_id).blast_available_at = None
+                db.commit()
     def test_visible_times_use_jakarta_timezone(self):
         self.assertEqual(jakarta_time(datetime(2026, 9, 10, 8, 20), "%H:%M"), "15:20")
 
