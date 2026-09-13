@@ -432,6 +432,40 @@ class TenantIsolationTests(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_sheet_interval_updates_a_running_job(self):
+        with SessionLocal() as db:
+            job = BlastJob(
+                user_id=self.owner_id,
+                source="sheet",
+                status="running",
+                message="live interval test",
+                delay_seconds=3600,
+                delay_max_seconds=3600,
+                accounts_json=json.dumps([self.owner_account_id]),
+            )
+            db.add(job)
+            db.commit()
+            job_id = job.id
+
+        response = SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"interval": 12},
+        )
+        client = SimpleNamespace(post=AsyncMock(return_value=response))
+        worker = SheetBlaster()
+        blast_manager.account_pool_events.pop(self.owner_id, None)
+        try:
+            with SessionLocal() as db:
+                job = db.get(BlastJob, job_id)
+                self.assertTrue(asyncio.run(worker._sync_settings(client, db, job)))
+                self.assertEqual((job.delay_seconds, job.delay_max_seconds), (12, 12))
+            self.assertTrue(blast_manager.account_pool_events[self.owner_id].is_set())
+        finally:
+            blast_manager.account_pool_events.pop(self.owner_id, None)
+            with SessionLocal() as db:
+                db.query(BlastJob).filter(BlastJob.id == job_id).delete()
+                db.commit()
+
     def test_completed_recipient_updates_job_counts_without_full_recount(self):
         with SessionLocal() as db:
             job = BlastJob(

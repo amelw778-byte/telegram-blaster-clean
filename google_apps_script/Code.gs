@@ -22,10 +22,17 @@ function doPost(event) {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    return body.action === 'claim' ? claim_(body.limit) : finish_(body.results || []);
+    if (body.action === 'claim') return claim_(body.limit);
+    if (body.action === 'settings') return settings_();
+    return finish_(body.results || []);
   } finally {
     lock.releaseLock();
   }
+}
+
+function settings_() {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(QUEUE_SHEET);
+  return json_({interval: Number(sheet.getRange('C2').getValue()) || 0});
 }
 
 function claim_(requestedLimit) {

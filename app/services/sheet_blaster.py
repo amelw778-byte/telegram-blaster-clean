@@ -66,7 +66,10 @@ class SheetBlaster:
 
             if job:
                 final = job.status in TERMINAL_STATES
-                changed = await self._sync_results(client, db, job, final=final)
+                changed = False
+                if not final:
+                    changed = await self._sync_settings(client, db, job)
+                changed = await self._sync_results(client, db, job, final=final) or changed
                 if final:
                     remaining = db.query(BlastRecipient.id).filter(
                         BlastRecipient.job_id == job.id,
@@ -118,6 +121,24 @@ class SheetBlaster:
             await self._create_job(client, user_id, account_ids, rows)
             return True
         return False
+
+    async def _sync_settings(self, client, db, job):
+        response = await client.post(
+            self.url,
+            json={"secret": self.secret, "action": "settings"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if "interval" not in payload:
+            return False
+        delay, _ = _normalize_delay_range(payload["interval"], payload["interval"])
+        if job.delay_seconds == delay and job.delay_max_seconds == delay:
+            return False
+        job.delay_seconds = delay
+        job.delay_max_seconds = delay
+        db.commit()
+        blast_manager.refresh_account_pool(job.user_id)
+        return True
 
     async def _sync_results(self, client, db, job, *, final):
         statuses = ["sent", "failed", "skipped"] if final else ["sent"]
