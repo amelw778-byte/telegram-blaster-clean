@@ -586,15 +586,10 @@ class BlastManager:
                 .scalar()
                 or 0
             )
-            finished_without_failure = job.sent_count + job.skipped_count
             if paused_count > 0:
                 job.status = "paused"
-            elif job.total_count > 0 and finished_without_failure == job.total_count and job.failed_count == 0:
-                job.status = "completed"
-            elif job.sent_count > 0 or job.skipped_count > 0:
-                job.status = "partial"
             else:
-                job.status = "failed"
+                job.status = "completed"
             job.completed_at = datetime.utcnow()
             db.commit()
 

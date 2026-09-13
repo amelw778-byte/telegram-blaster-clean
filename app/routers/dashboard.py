@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -69,7 +69,10 @@ def dashboard(
         db.query(func.count(BlastJob.id))
         .filter(
             BlastJob.user_id == current_user.id,
-            BlastJob.status.in_(["queued", "running"]),
+            or_(
+                BlastJob.status.in_(["queued", "running"]),
+                (BlastJob.source == "sheet") & (BlastJob.status == "paused"),
+            ),
         )
         .scalar()
         or 0

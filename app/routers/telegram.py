@@ -648,26 +648,28 @@ def job_status(
     )
 
     status_labels = {
-        "pending": "Belum dikirim",
-        "sending": "Sedang mengirim",
+        "pending": "Proses",
+        "sending": "Proses",
         "sent": "Terkirim",
         "failed": "Gagal",
         "skipped": "Dilewati",
-        "paused": "Dijeda — belum dikirim",
+        "paused": "Proses",
     }
     job_labels = {
-        "queued": "Menunggu antrean",
-        "running": "Sedang berjalan",
+        "queued": "Proses",
+        "running": "Proses",
         "completed": "Selesai",
-        "partial": "Selesai sebagian",
-        "failed": "Gagal",
-        "paused": "Dijeda oleh Telegram",
+        "partial": "Selesai",
+        "failed": "Selesai",
+        "paused": "Proses",
     }
 
     return JSONResponse({
         "id": job.id,
         "status": job.status,
         "status_label": job_labels.get(job.status, job.status),
+        "terminal": job.status in {"completed", "partial", "failed"}
+        or (job.status == "paused" and job.source != "sheet"),
         "total": job.total_count,
         "sent": job.sent_count,
         "failed": job.failed_count,

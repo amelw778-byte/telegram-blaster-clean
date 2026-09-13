@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 import os
 from datetime import datetime, timedelta
 
@@ -13,7 +14,6 @@ from app.services.blast_manager import blast_manager
 
 
 TERMINAL_STATES = {"completed", "partial", "failed"}
-SHEET_BATCH_SIZE = max(1, int(os.getenv("SHEET_BLAST_BATCH_SIZE", "500")))
 
 
 class SheetBlaster:
@@ -110,10 +110,21 @@ class SheetBlaster:
             user_id = user.id
             if not account_ids:
                 return False
+            last_completed = db.query(BlastJob.completed_at).filter(
+                BlastJob.user_id == user.id,
+                BlastJob.source == "sheet",
+                BlastJob.completed_at.isnot(None),
+            ).order_by(BlastJob.completed_at.desc()).first()
+            last_completed_at = last_completed[0] if last_completed else None
+
+        settings = await self._fetch_settings(client)
+        delay_minutes = self._job_delay_minutes(settings)
+        if self._waiting_for_next_job(last_completed_at, delay_minutes):
+            return False
 
         response = await client.post(
             self.url,
-            json={"secret": self.secret, "action": "claim", "limit": SHEET_BATCH_SIZE},
+            json={"secret": self.secret, "action": "claim"},
         )
         response.raise_for_status()
         rows = response.json().get("items", [])
@@ -122,13 +133,32 @@ class SheetBlaster:
             return True
         return False
 
-    async def _sync_settings(self, client, db, job):
+    async def _fetch_settings(self, client):
         response = await client.post(
             self.url,
             json={"secret": self.secret, "action": "settings"},
         )
         response.raise_for_status()
-        payload = response.json()
+        return response.json()
+
+    @staticmethod
+    def _job_delay_minutes(payload):
+        try:
+            value = float(payload.get("job_delay_minutes", 0))
+        except (TypeError, ValueError):
+            return 0
+        return value if math.isfinite(value) and value > 0 else 0
+
+    @staticmethod
+    def _waiting_for_next_job(completed_at, delay_minutes, now=None):
+        return bool(
+            completed_at
+            and (now or datetime.utcnow())
+            < completed_at + timedelta(minutes=delay_minutes)
+        )
+
+    async def _sync_settings(self, client, db, job):
+        payload = await self._fetch_settings(client)
         if "interval" not in payload:
             return False
         delay, _ = _normalize_delay_range(payload["interval"], payload["interval"])

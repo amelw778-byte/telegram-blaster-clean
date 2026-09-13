@@ -114,12 +114,12 @@
   <div class="flex-between" style="margin-bottom:16px;">
     <div>
       <div class="card-title" style="margin-bottom:4px;">Status Job #{{ job.id }}</div>
-      <span id="job-status" class="badge badge-blue">{{ job.status }}</span>
+      <span id="job-status" class="badge {% if job.status in ('completed', 'partial', 'failed') %}badge-green{% else %}badge-orange{% endif %}">{% if job.status in ('completed', 'partial', 'failed') %}Selesai{% else %}Proses{% endif %}</span>
     </div>
     <div style="display:flex;gap:8px;align-items:center;">
       {% if job.status in ('running', 'queued') %}
       <form method="post" action="/stop-job/{{ job.id }}" style="margin:0;"
-            onsubmit="return confirm('Stop blast job #{{ job.id }}? Pesan yang sedang dikirim akan selesai, sisanya dijeda.')">
+            onsubmit="return confirm('Stop blast job #{{ job.id }}? Pesan yang sedang dikirim akan selesai, sisanya dihentikan.')">
         <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
         <button class="btn btn-danger" type="submit">Stop Blast</button>
       </form>
@@ -131,7 +131,7 @@
   <div class="stats-grid" style="margin-bottom:16px;">
     <div class="stat"><div class="stat-label">Total</div><div class="stat-value" id="count-total">{{ job.total_count }}</div></div>
     <div class="stat"><div class="stat-label">Terkirim</div><div class="stat-value" id="count-sent" style="color:#86efac;">{{ job.sent_count }}</div></div>
-    <div class="stat"><div class="stat-label">Belum / Dijeda</div><div class="stat-value" id="count-pending" style="color:#fcd34d;">{{ job.pending_count }}</div></div>
+    <div class="stat"><div class="stat-label">Dalam proses</div><div class="stat-value" id="count-pending" style="color:#fcd34d;">{{ job.pending_count }}</div></div>
     <div class="stat"><div class="stat-label">Gagal / Dilewati</div><div class="stat-value" id="count-failed" style="color:#fca5a5;">{{ job.failed_count + job.skipped_count }}</div></div>
   </div>
 
@@ -147,7 +147,7 @@
           <td>{{ loop.index }}</td>
           <td><code>@{{ row.username }}</code></td>
           <td>{{ row.account.label if row.account and row.account.label else (row.account.phone if row.account else 'Akun dihapus') }}</td>
-          <td>{{ row.status }}</td>
+          <td>{% if row.status in ('pending', 'sending', 'paused') %}Proses{% elif row.status == 'sent' %}Terkirim{% elif row.status == 'failed' %}Gagal{% else %}Dilewati{% endif %}</td>
           <td class="muted small">{{ row.error or '—' }}</td>
         </tr>
       {% endfor %}
@@ -169,12 +169,8 @@
           <td><a class="inline-link" href="/blast?job_id={{ item.id }}">#{{ item.id }}</a></td>
           <td class="muted small">{{ item.created_at|jakarta_time('%d %b %Y %H:%M:%S') }}</td>
           <td>
-            {% if item.status == 'running' %}<span class="badge badge-orange">Sedang berjalan</span>
-            {% elif item.status == 'queued' %}<span class="badge badge-blue">Menunggu</span>
-            {% elif item.status == 'completed' %}<span class="badge badge-green">Selesai</span>
-            {% elif item.status == 'partial' %}<span class="badge badge-purple">Selesai sebagian</span>
-            {% elif item.status == 'paused' %}<span class="badge badge-purple">Dijeda</span>
-            {% else %}<span class="badge badge-red">Gagal</span>{% endif %}
+            {% if item.status in ('completed', 'partial', 'failed') %}<span class="badge badge-green">Selesai</span>
+            {% else %}<span class="badge badge-orange">Proses</span>{% endif %}
           </td>
           <td><strong style="color:#86efac;">{{ item.sent_count }}</strong> / {{ item.total_count }}</td>
           <td style="color:#fca5a5;">{{ item.failed_count }}</td>
@@ -278,21 +274,19 @@ if (accountSearch) {
 const jobCard = document.getElementById('job-card');
 if (jobCard) {
   const jobId = jobCard.dataset.jobId;
-  const terminal = new Set(['completed', 'partial', 'failed', 'paused']);
   let timer = null;
 
   function badgeClass(status) {
     if (status === 'completed') return 'badge badge-green';
     if (status === 'running') return 'badge badge-orange';
-    if (status === 'partial') return 'badge badge-purple';
-    if (status === 'failed') return 'badge badge-red';
-    if (status === 'paused') return 'badge badge-purple';
+    if (status === 'partial' || status === 'failed') return 'badge badge-green';
+    if (status === 'paused') return 'badge badge-orange';
     return 'badge badge-blue';
   }
 
   function recipientBadge(status, label) {
     const classes = {
-      sent:'badge-green', sending:'badge-orange', failed:'badge-red', skipped:'badge-gray', pending:'badge-blue', paused:'badge-purple'
+      sent:'badge-green', sending:'badge-orange', failed:'badge-red', skipped:'badge-gray', pending:'badge-orange', paused:'badge-orange'
     };
     return `<span class="badge ${classes[status] || 'badge-gray'}">${label}</span>`;
   }
@@ -314,11 +308,7 @@ if (jobCard) {
       const finished = data.sent + data.failed + data.skipped;
       const percent = data.total ? Math.round((finished / data.total) * 100) : 0;
       document.getElementById('progress-bar').style.width = `${percent}%`;
-      if (data.status === 'paused') {
-        document.getElementById('progress-text').textContent = `${finished} dari ${data.total} target selesai. Sisanya belum dikirim karena akun dibatasi atau diminta menunggu oleh Telegram.`;
-      } else {
-        document.getElementById('progress-text').textContent = `${finished} dari ${data.total} target selesai diproses (${percent}%).`;
-      }
+      document.getElementById('progress-text').textContent = `${finished} dari ${data.total} target selesai diproses (${percent}%).`;
 
       const tbody = document.getElementById('recipient-table');
       tbody.innerHTML = data.recipients.map((row, index) => `
@@ -330,7 +320,7 @@ if (jobCard) {
           <td class="muted small">${escapeHtml(row.error || '—')}</td>
         </tr>`).join('');
 
-      if (!terminal.has(data.status)) timer = setTimeout(refreshJob, 3000);
+      if (!data.terminal) timer = setTimeout(refreshJob, 3000);
     } catch (error) {
       document.getElementById('progress-text').textContent = `Gagal memperbarui status: ${error.message}`;
       timer = setTimeout(refreshJob, 5000);

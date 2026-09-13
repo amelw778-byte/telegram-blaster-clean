@@ -466,6 +466,47 @@ class TenantIsolationTests(unittest.TestCase):
                 db.query(BlastJob).filter(BlastJob.id == job_id).delete()
                 db.commit()
 
+    def test_sheet_waits_the_configured_minutes_between_jobs(self):
+        now = datetime.utcnow()
+        self.assertTrue(SheetBlaster._waiting_for_next_job(
+            now - timedelta(minutes=9), 10, now
+        ))
+        self.assertFalse(SheetBlaster._waiting_for_next_job(
+            now - timedelta(minutes=10), 10, now
+        ))
+        self.assertEqual(SheetBlaster._job_delay_minutes({"job_delay_minutes": 10}), 10)
+
+    def test_finished_job_with_failed_targets_is_still_completed(self):
+        with SessionLocal() as db:
+            job = BlastJob(
+                user_id=self.owner_id,
+                status="running",
+                message="completed with failed target",
+                accounts_json=json.dumps([self.owner_account_id]),
+                total_count=1,
+            )
+            db.add(job)
+            db.flush()
+            db.add(BlastRecipient(
+                job_id=job.id,
+                account_id=self.owner_account_id,
+                username="missing_target",
+                normalized_username="missing_target",
+                status="failed",
+                error="Username tidak ditemukan",
+            ))
+            db.commit()
+            job_id = job.id
+
+        try:
+            blast_manager._finalize_job(job_id)
+            with SessionLocal() as db:
+                self.assertEqual(db.get(BlastJob, job_id).status, "completed")
+        finally:
+            with SessionLocal() as db:
+                db.query(BlastJob).filter(BlastJob.id == job_id).delete()
+                db.commit()
+
     def test_completed_recipient_updates_job_counts_without_full_recount(self):
         with SessionLocal() as db:
             job = BlastJob(

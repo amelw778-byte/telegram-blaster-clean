@@ -44,7 +44,6 @@ DATA_ENCRYPTION_KEY_OLD=<previous-key>
 SHEET_BLAST_WEBAPP_URL=https://script.google.com/macros/s/.../exec
 SHEET_BLAST_SECRET=<strong-random-secret>
 SHEET_BLAST_OWNER=porscy
-SHEET_BLAST_BATCH_SIZE=500
 SHEET_BLAST_POLL_SECONDS=30
 SHEET_BLAST_RETRY_SECONDS=300
 PEER_FLOOD_COOLDOWN_SECONDS=86400
@@ -59,9 +58,10 @@ disimpan sebagai hash scrypt dengan salt unik. Google OAuth tetap tersedia
 sebagai opsi ketika kredensialnya dikonfigurasi. Fitur pemulihan password hanya
 aktif setelah konfigurasi SMTP diisi.
 
-Antrean Sheet memakai kolom `Username`, `Pesan`, `Interval (detik)`, dan
-`Kuota per job`; pesan global diisi pada B2, interval detik pada C2, dan
-jumlah username untuk setiap job pada D2.
+Antrean Sheet memakai kolom `Username`, `Pesan`, `Interval (detik)`,
+`Kuota per job`, dan `Jeda antar job (menit)`; pesan global diisi pada B2,
+interval detik pada C2, jumlah username setiap job pada D2, dan jeda sebelum
+job berikutnya pada F2.
 Salin `google_apps_script/Code.gs` ke Apps Script yang terikat pada spreadsheet,
 atur Script Property `SHEET_BLAST_SECRET`, jalankan `siapkan()` sekali, lalu
 deploy sebagai Web App. Baris terkirim dipindahkan ke tab `Selesai`; baris gagal
