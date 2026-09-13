@@ -33,6 +33,7 @@ class BlastManager:
         self.tasks: Dict[int, asyncio.Task] = {}
         self.enqueue_lock = asyncio.Lock()
         self._stop_flags: Dict[int, bool] = {}  # job_id → True berarti stop diminta
+        self.account_pool_events: Dict[int, asyncio.Event] = {}
 
     # ─── Public API ──────────────────────────────────────────────────────────
 
@@ -50,6 +51,9 @@ class BlastManager:
             self._stop_flags[job_id] = True
             return True
         return False
+
+    def refresh_account_pool(self, user_id: int) -> None:
+        self.account_pool_events.setdefault(user_id, asyncio.Event()).set()
 
     async def resume_incomplete_jobs(self) -> None:
         with SessionLocal() as db:
@@ -79,6 +83,7 @@ class BlastManager:
 
     async def _run_job(self, job_id: int) -> None:
         try:
+            pool_event = None
             with SessionLocal() as db:
                 job = db.get(BlastJob, job_id)
                 if not job:
@@ -96,6 +101,11 @@ class BlastManager:
                         .filter(BlastRecipient.job_id == job_id, BlastRecipient.account_id.isnot(None))
                         .distinct().all()
                     ]
+                if job.source == "sheet":
+                    pool_event = self.account_pool_events.setdefault(
+                        job.user_id, asyncio.Event()
+                    )
+                    pool_event.clear()
                 available_ids = self._available_account_ids(db, job, selected_ids)
 
             unavailable_ids = set()
@@ -121,10 +131,15 @@ class BlastManager:
                     *(self._run_account_queue(job_id, account_id, grouped[account_id]) for account_id in account_ids),
                     return_exceptions=True,
                 )
+                pool_changed = bool(pool_event and pool_event.is_set())
                 unavailable_ids.update({
                     account_id for account_id, result in zip(account_ids, results)
-                    if isinstance(result, Exception) or result != "available"
+                    if isinstance(result, Exception)
+                    or result not in {"available", "refresh"}
                 })
+                if pool_changed:
+                    unavailable_ids.clear()
+                    pool_event.clear()
                 with SessionLocal() as db:
                     job = db.get(BlastJob, job_id)
                     refreshed_ids = self._available_account_ids(db, job, selected_ids)
@@ -208,6 +223,10 @@ class BlastManager:
                     "api_hash": account.api_hash,
                     "last_blast_sent_at": account.last_blast_sent_at,
                 }
+                dynamic_pool = job.source == "sheet"
+                pool_event = self.account_pool_events.setdefault(
+                    job.user_id, asyncio.Event()
+                ) if dynamic_pool else None
                 message = job.message
                 image_path = job.image_path
                 stored_delay_min = (
@@ -250,9 +269,17 @@ class BlastManager:
                         datetime.utcnow() - last_sent_at
                     ).total_seconds()
                     if remaining_delay > 0:
-                        await asyncio.sleep(remaining_delay)
+                        if dynamic_pool and await self._wait_for_account_pool_change(
+                            job.user_id, remaining_delay
+                        ):
+                            return "refresh"
+                        if not dynamic_pool:
+                            await asyncio.sleep(remaining_delay)
 
                 for position, recipient_id in enumerate(ids):
+                    if pool_event and pool_event.is_set():
+                        account_result = "refresh"
+                        break
                     # ── Cek stop flag ───────────────────────────────────────
                     if self._stop_flags.get(job_id, False):
                         remaining = ids[position:]
@@ -309,7 +336,13 @@ class BlastManager:
                     if position < len(ids) - 1:
                         actual_delay = random.uniform(delay_min, delay_max)
                         if actual_delay > 0:
-                            await asyncio.sleep(actual_delay)
+                            if dynamic_pool and await self._wait_for_account_pool_change(
+                                job.user_id, actual_delay
+                            ):
+                                account_result = "refresh"
+                                break
+                            if not dynamic_pool:
+                                await asyncio.sleep(actual_delay)
                 return account_result
 
             except Exception as exc:
@@ -417,6 +450,14 @@ class BlastManager:
                 return "failed"
 
     # ─── Helpers ─────────────────────────────────────────────────────────────
+
+    async def _wait_for_account_pool_change(self, user_id: int, seconds: float) -> bool:
+        event = self.account_pool_events.setdefault(user_id, asyncio.Event())
+        try:
+            await asyncio.wait_for(event.wait(), timeout=seconds)
+            return True
+        except TimeoutError:
+            return False
 
     @staticmethod
     def _available_account_ids(db, job: BlastJob, selected_ids: list[int]) -> list[int]:

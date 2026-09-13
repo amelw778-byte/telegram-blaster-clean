@@ -316,6 +316,7 @@ async def _save_account(request, db, current_user, phone, api_id, api_hash, labe
     db.commit()
     db.refresh(account)
     inbox_manager.start(account.id)
+    blast_manager.refresh_account_pool(current_user.id)
 
     return _render(request, "connect_telegram.html", {
         "step": "blast",
@@ -372,20 +373,24 @@ async def delete_account(
     ).first()
     if not account:
         raise HTTPException(status_code=404, detail="Akun tidak ditemukan")
-    running = (
+    running_manual = (
         db.query(BlastRecipient.id)
         .join(BlastJob, BlastJob.id == BlastRecipient.job_id)
         .filter(
             BlastRecipient.account_id == account_id,
             BlastJob.user_id == current_user.id,
+            BlastJob.source != "sheet",
             BlastJob.status.in_(["queued", "running"]),
             BlastRecipient.status.in_(["pending", "sending"]),
         )
         .first()
     )
-    if running:
+    if running_manual:
         return RedirectResponse(url="/dashboard?error=account_busy", status_code=303)
 
+    account.is_active = 0
+    db.commit()
+    blast_manager.refresh_account_pool(current_user.id)
     await inbox_manager.stop(account.id)
     db.delete(account)
     db.commit()

@@ -408,6 +408,11 @@ class TenantIsolationTests(unittest.TestCase):
                 ),
                 [self.owner_account_id],
             )
+            blast_manager.refresh_account_pool(self.owner_id)
+            self.assertTrue(asyncio.run(
+                blast_manager._wait_for_account_pool_change(self.owner_id, 3600)
+            ))
+            blast_manager.account_pool_events.pop(self.owner_id, None)
             db.rollback()
 
     def test_sheet_worker_repeats_immediately_after_changes(self):
