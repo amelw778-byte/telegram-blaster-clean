@@ -96,22 +96,12 @@ class BlastManager:
                         .filter(BlastRecipient.job_id == job_id, BlastRecipient.account_id.isnot(None))
                         .distinct().all()
                     ]
-                valid_ids = {
-                    row[0] for row in db.query(TelegramAccount.id).filter(
-                        TelegramAccount.id.in_(selected_ids),
-                        TelegramAccount.user_id == job.user_id,
-                        TelegramAccount.is_active == 1,
-                        TelegramAccount.session_str.isnot(None),
-                        or_(
-                            TelegramAccount.blast_available_at.is_(None),
-                            TelegramAccount.blast_available_at <= datetime.utcnow(),
-                        ),
-                    ).all()
-                }
-                available_ids = [account_id for account_id in selected_ids if account_id in valid_ids]
+                available_ids = self._available_account_ids(db, job, selected_ids)
 
+            unavailable_ids = set()
             while available_ids and not self._stop_flags.get(job_id, False):
                 with SessionLocal() as db:
+                    job = db.get(BlastJob, job_id)
                     recipients = db.query(BlastRecipient).filter(
                         BlastRecipient.job_id == job_id,
                         BlastRecipient.status == "pending",
@@ -119,7 +109,7 @@ class BlastManager:
                     if not recipients:
                         break
                     for index, recipient in enumerate(recipients):
-                        if recipient.account_id not in available_ids:
+                        if job.source == "sheet" or recipient.account_id not in available_ids:
                             recipient.account_id = available_ids[index % len(available_ids)]
                     db.commit()
                     grouped: Dict[int, List[int]] = defaultdict(list)
@@ -131,11 +121,17 @@ class BlastManager:
                     *(self._run_account_queue(job_id, account_id, grouped[account_id]) for account_id in account_ids),
                     return_exceptions=True,
                 )
-                unavailable_ids = {
+                unavailable_ids.update({
                     account_id for account_id, result in zip(account_ids, results)
                     if isinstance(result, Exception) or result != "available"
-                }
-                available_ids = [account_id for account_id in available_ids if account_id not in unavailable_ids]
+                })
+                with SessionLocal() as db:
+                    job = db.get(BlastJob, job_id)
+                    refreshed_ids = self._available_account_ids(db, job, selected_ids)
+                available_ids = [
+                    account_id for account_id in refreshed_ids
+                    if account_id not in unavailable_ids
+                ]
                 if self._stop_flags.get(job_id, False):
                     break
 
@@ -421,6 +417,25 @@ class BlastManager:
                 return "failed"
 
     # ─── Helpers ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _available_account_ids(db, job: BlastJob, selected_ids: list[int]) -> list[int]:
+        query = db.query(TelegramAccount.id).filter(
+            TelegramAccount.user_id == job.user_id,
+            TelegramAccount.is_active == 1,
+            TelegramAccount.session_str.isnot(None),
+            or_(
+                TelegramAccount.blast_available_at.is_(None),
+                TelegramAccount.blast_available_at <= datetime.utcnow(),
+            ),
+        )
+        if job.source != "sheet":
+            if not selected_ids:
+                return []
+            query = query.filter(TelegramAccount.id.in_(selected_ids))
+            valid_ids = {row[0] for row in query}
+            return [account_id for account_id in selected_ids if account_id in valid_ids]
+        return [row[0] for row in query.order_by(TelegramAccount.id)]
 
     @staticmethod
     def _set_account_cooldown(account_id: int | None, seconds: int) -> None:

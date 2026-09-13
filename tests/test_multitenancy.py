@@ -373,6 +373,43 @@ class TenantIsolationTests(unittest.TestCase):
                 account.blast_available_at = None
                 db.commit()
 
+    def test_sheet_job_automatically_includes_new_eligible_accounts(self):
+        with SessionLocal() as db:
+            new_account = TelegramAccount(
+                user_id=self.owner_id,
+                label="New Sheet Account",
+                phone="+629811223344",
+                session_str="new-sheet-session",
+                api_id=88,
+                api_hash="new-sheet-hash",
+                is_active=1,
+            )
+            db.add(new_account)
+            db.flush()
+            job = BlastJob(
+                user_id=self.owner_id,
+                source="sheet",
+                status="queued",
+                message="dynamic account test",
+                accounts_json=json.dumps([self.owner_account_id]),
+            )
+            db.add(job)
+            db.flush()
+            self.assertIn(
+                new_account.id,
+                blast_manager._available_account_ids(
+                    db, job, [self.owner_account_id]
+                ),
+            )
+            job.source = "manual"
+            self.assertEqual(
+                blast_manager._available_account_ids(
+                    db, job, [self.owner_account_id]
+                ),
+                [self.owner_account_id],
+            )
+            db.rollback()
+
     def test_sheet_worker_repeats_immediately_after_changes(self):
         worker = SheetBlaster()
         worker.sync_once = AsyncMock(return_value=True)
