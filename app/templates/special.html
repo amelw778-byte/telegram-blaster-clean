@@ -5,7 +5,7 @@
   <div>
     <span class="eyebrow">Fitur Spesial</span>
     <h1>Auto-reply <span class="gradient-text">Pelanggan</span></h1>
-    <p>Kirim satu balasan otomatis pada pesan pertama pelanggan di setiap akun Telegram.</p>
+    <p>Atur kapan setiap akun Telegram mengirim balasan otomatis kepada pelanggan.</p>
   </div>
   <span class="badge {% if current_user.auto_reply_enabled %}badge-green{% else %}badge-gray{% endif %}">
     {% if current_user.auto_reply_enabled %}Aktif{% else %}Nonaktif{% endif %}
@@ -30,7 +30,14 @@
   <div class="field">
     <label for="auto-reply-message">Teks balasan otomatis</label>
     <textarea id="auto-reply-message" name="message" maxlength="4096" placeholder="Terima kasih sudah menghubungi kami. Pesan Anda segera kami balas.">{{ current_user.auto_reply_message or '' }}</textarea>
-    <p class="muted small">Dikirim satu kali, lalu tidak aktif selama 24 jam untuk pelanggan tersebut pada akun penerima yang sama.</p>
+  </div>
+
+  <div class="field">
+    <label for="auto-reply-mode">Mode pengiriman</label>
+    <select id="auto-reply-mode" name="mode">
+      <option value="cooldown" {% if (current_user.auto_reply_mode or 'cooldown') == 'cooldown' %}selected{% endif %}>Dikirim satu kali, lalu tidak aktif selama 24 jam untuk pelanggan dan akun yang sama</option>
+      <option value="always" {% if current_user.auto_reply_mode == 'always' %}selected{% endif %}>Dikirim setiap kali pelanggan mengirim pesan</option>
+    </select>
   </div>
 
   <button class="btn btn-primary" type="submit">Simpan Pengaturan</button>

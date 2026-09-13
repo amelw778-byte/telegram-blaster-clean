@@ -12,6 +12,7 @@ from app.models import User
 
 router = APIRouter(prefix="/special", tags=["special"])
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
+AUTO_REPLY_MODES = {"cooldown", "always"}
 
 
 @router.get("")
@@ -31,14 +32,16 @@ def special_page(
 def update_auto_reply(
     enabled: bool = Form(False),
     message: str = Form(""),
+    mode: str = Form("cooldown"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     _csrf: None = Depends(verify_csrf),
 ):
     message = message.strip()
-    if len(message) > 4096 or (enabled and not message):
+    if len(message) > 4096 or (enabled and not message) or mode not in AUTO_REPLY_MODES:
         return RedirectResponse("/special?error=invalid_message", status_code=303)
     current_user.auto_reply_enabled = enabled
     current_user.auto_reply_message = message or None
+    current_user.auto_reply_mode = mode
     db.commit()
     return RedirectResponse("/special?notice=saved", status_code=303)

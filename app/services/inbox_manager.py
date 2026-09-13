@@ -317,10 +317,12 @@ class InboxManager:
                 return None
             conversation, user = row
             message = (user.auto_reply_message or "").strip()
+            use_cooldown = (user.auto_reply_mode or "cooldown") != "always"
             if (
                 not message
                 or (
-                    conversation.auto_replied_at
+                    use_cooldown
+                    and conversation.auto_replied_at
                     and conversation.auto_replied_at > now - AUTO_REPLY_COOLDOWN
                 )
             ):

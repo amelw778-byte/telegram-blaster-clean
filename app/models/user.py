@@ -21,5 +21,6 @@ class User(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     auto_reply_enabled = Column(Boolean, nullable=False, default=False)
     auto_reply_message = Column(Text, nullable=True)
+    auto_reply_mode = Column(String(20), nullable=False, default="cooldown")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_login_at = Column(DateTime, nullable=True)

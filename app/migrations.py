@@ -113,6 +113,7 @@ def _upgrade_inbox_schema() -> None:
             "users": {
                 "auto_reply_enabled": "BOOLEAN NOT NULL DEFAULT FALSE",
                 "auto_reply_message": "TEXT",
+                "auto_reply_mode": "VARCHAR(20) NOT NULL DEFAULT 'cooldown'",
             },
             "inbox_conversations": {"auto_replied_at": "TIMESTAMP"},
             "inbox_messages": {

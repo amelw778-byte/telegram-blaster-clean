@@ -1120,12 +1120,15 @@ class TenantIsolationTests(unittest.TestCase):
         page = self.client.get("/special")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Fitur Spesial", page.text)
+        self.assertIn('name="mode"', page.text)
+        self.assertIn('value="always"', page.text)
         response = self.client.post(
             "/special/auto-reply",
             data={
                 "csrf_token": _csrf_from(page.text),
                 "enabled": "true",
                 "message": "Halo, pesanmu sudah kami terima.",
+                "mode": "cooldown",
             },
             follow_redirects=False,
         )
@@ -1134,6 +1137,7 @@ class TenantIsolationTests(unittest.TestCase):
         with SessionLocal() as db:
             owner = db.get(User, self.owner_id)
             self.assertTrue(owner.auto_reply_enabled)
+            self.assertEqual(owner.auto_reply_mode, "cooldown")
             second_account = TelegramAccount(
                 user_id=self.owner_id,
                 label="Auto Reply Account B",
@@ -1217,6 +1221,40 @@ class TenantIsolationTests(unittest.TestCase):
                 owner = db.get(User, self.owner_id)
                 owner.auto_reply_enabled = False
                 owner.auto_reply_message = None
+                owner.auto_reply_mode = "cooldown"
+                db.commit()
+
+    def test_special_auto_reply_always_mode_replies_to_every_message(self):
+        peer_id = 9191
+        with SessionLocal() as db:
+            owner = db.get(User, self.owner_id)
+            owner.auto_reply_enabled = True
+            owner.auto_reply_message = "Balasan setiap pesan"
+            owner.auto_reply_mode = "always"
+            db.add(InboxConversation(
+                user_id=self.owner_id,
+                account_id=self.owner_account_id,
+                peer_id=peer_id,
+                peer_access_hash=1919,
+                peer_name="Always Test",
+            ))
+            db.commit()
+
+        try:
+            first = inbox_manager._claim_auto_reply(self.owner_account_id, peer_id)
+            second = inbox_manager._claim_auto_reply(self.owner_account_id, peer_id)
+            self.assertEqual(first[0], "Balasan setiap pesan")
+            self.assertEqual(second[0], "Balasan setiap pesan")
+        finally:
+            with SessionLocal() as db:
+                db.query(InboxConversation).filter(
+                    InboxConversation.account_id == self.owner_account_id,
+                    InboxConversation.peer_id == peer_id,
+                ).delete()
+                owner = db.get(User, self.owner_id)
+                owner.auto_reply_enabled = False
+                owner.auto_reply_message = None
+                owner.auto_reply_mode = "cooldown"
                 db.commit()
 
     def test_inbox_startup_includes_all_connected_accounts(self):
