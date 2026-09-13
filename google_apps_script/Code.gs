@@ -1,6 +1,6 @@
 const QUEUE_SHEET = 'Blast Otomatis';
 const DONE_SHEET = 'Selesai';
-const HEADERS = ['Username', 'Pesan', 'Interval (detik)', 'ID', 'Diklaim pada', 'Status terakhir'];
+const HEADERS = ['Username', 'Pesan', 'Interval (detik)', 'Kuota per job', 'ID', 'Diklaim pada', 'Status terakhir'];
 
 function siapkan() {
   const file = SpreadsheetApp.getActive();
@@ -10,7 +10,10 @@ function siapkan() {
     queue.insertRowsBefore(1, 2);
     queue.getRange('A2').setValue('Pengaturan');
   }
+  if (queue.getRange('D1').getValue() === 'ID') queue.insertColumnAfter(3);
   queue.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
+  if (!queue.getRange('D2').getValue()) queue.getRange('D2').setValue(500);
+  queue.hideColumns(5, 1);
   queue.setFrozenRows(1);
   const done = file.getSheetByName(DONE_SHEET) || file.insertSheet(DONE_SHEET);
   if (!done.getLastRow()) done.appendRow([...HEADERS.slice(0, 3), 'Terkirim pada']);
@@ -22,7 +25,8 @@ function doPost(event) {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    if (body.action === 'claim') return claim_(body.limit);
+    ensureSchema_();
+    if (body.action === 'claim') return claim_();
     if (body.action === 'settings') return settings_();
     return finish_(body.results || []);
   } finally {
@@ -30,14 +34,28 @@ function doPost(event) {
   }
 }
 
-function settings_() {
+function ensureSchema_() {
   const sheet = SpreadsheetApp.getActive().getSheetByName(QUEUE_SHEET);
-  return json_({interval: Number(sheet.getRange('C2').getValue()) || 0});
+  if (sheet.getRange('D1').getValue() !== 'ID') return;
+  sheet.insertColumnAfter(3);
+  sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
+  sheet.getRange('D2').setValue(500);
+  sheet.hideColumns(5, 1);
 }
 
-function claim_(requestedLimit) {
-  const limit = Math.min(500, Math.max(1, Number(requestedLimit) || 500));
+function quota_(sheet) {
+  const quota = Math.floor(Number(sheet.getRange('D2').getValue()));
+  return Number.isFinite(quota) && quota > 0 ? quota : 500;
+}
+
+function settings_() {
   const sheet = SpreadsheetApp.getActive().getSheetByName(QUEUE_SHEET);
+  return json_({interval: Number(sheet.getRange('C2').getValue()) || 0, quota: quota_(sheet)});
+}
+
+function claim_() {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(QUEUE_SHEET);
+  const limit = quota_(sheet);
   const message = String(sheet.getRange('B2').getValue()).trim();
   const interval = Number(sheet.getRange('C2').getValue()) || 0;
   if (!message) return json_({items: []});
@@ -50,9 +68,9 @@ function claim_(requestedLimit) {
   const items = [];
   values.forEach(row => {
     if (items.length >= limit || !row[0]) return;
-    if (row[3] && row[4] && new Date(row[4]) > expired) return;
-    const id = row[3] || Utilities.getUuid();
-    row.splice(3, 3, id, now, 'Diproses');
+    if (row[4] && row[5] && new Date(row[5]) > expired) return;
+    const id = row[4] || Utilities.getUuid();
+    row.splice(4, 3, id, now, 'Diproses');
     items.push({id, username: String(row[0]), message, interval});
   });
   range.setValues(values);
@@ -71,13 +89,13 @@ function finish_(rawResults) {
   const completed = [];
   const remove = [];
   values.forEach((row, index) => {
-    const result = results.get(String(row[3]));
+    const result = results.get(String(row[4]));
     if (!result) return;
     if (result.status === 'sent') {
       completed.push([row[0], result.message, result.interval, new Date()]);
       remove.push(index + 3);
     } else {
-      row.splice(3, 3, '', '', result.error || result.status);
+      row.splice(4, 3, '', '', result.error || result.status);
     }
   });
   range.setValues(values);

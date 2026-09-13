@@ -59,14 +59,15 @@ disimpan sebagai hash scrypt dengan salt unik. Google OAuth tetap tersedia
 sebagai opsi ketika kredensialnya dikonfigurasi. Fitur pemulihan password hanya
 aktif setelah konfigurasi SMTP diisi.
 
-Antrean Sheet memakai kolom `Username`, `Pesan`, dan `Interval (detik)`;
-pesan global diisi pada B2 dan interval detik pada C2.
+Antrean Sheet memakai kolom `Username`, `Pesan`, `Interval (detik)`, dan
+`Kuota per job`; pesan global diisi pada B2, interval detik pada C2, dan
+jumlah username untuk setiap job pada D2.
 Salin `google_apps_script/Code.gs` ke Apps Script yang terikat pada spreadsheet,
 atur Script Property `SHEET_BLAST_SECRET`, jalankan `siapkan()` sekali, lalu
 deploy sebagai Web App. Baris terkirim dipindahkan ke tab `Selesai`; baris gagal
 tetap di `Blast Otomatis` dan dicoba lagi.
-Ukuran paket 500 hanya menjaga pertukaran data dengan Apps Script tetap stabil;
-jumlah antrean total tidak dibatasi dan paket berikutnya dimulai otomatis.
+Nilai awal kuota adalah 500; antrean total tidak dibatasi dan job berikutnya
+dimulai otomatis setelah job sebelumnya selesai.
 
 `session_str` dan `api_hash` Telegram dienkripsi menggunakan Fernet sebelum
 masuk database. Sesi web dicatat di tabel `device_sessions`, sehingga pengguna
