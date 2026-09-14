@@ -284,7 +284,10 @@ class TenantIsolationTests(unittest.TestCase):
             job_id = job.id
             backup_account_id = backup_account.id
 
+        calls = []
+
         async def run_queue(_job_id, account_id, recipient_ids):
+            calls.append((account_id, len(recipient_ids)))
             with SessionLocal() as db:
                 rows = db.query(BlastRecipient).filter(BlastRecipient.id.in_(recipient_ids)).all()
                 if account_id == self.owner_account_id:
@@ -309,6 +312,10 @@ class TenantIsolationTests(unittest.TestCase):
                 self.assertEqual(job.status, "completed")
                 self.assertTrue(all(row.status == "sent" for row in rows))
                 self.assertTrue(all(row.account_id == backup_account_id for row in rows))
+                self.assertEqual(calls, [
+                    (self.owner_account_id, 4),
+                    (backup_account_id, 4),
+                ])
         finally:
             with SessionLocal() as db:
                 db.query(BlastJob).filter(BlastJob.id == job_id).delete()

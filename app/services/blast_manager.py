@@ -2,10 +2,9 @@ import asyncio
 import json
 import os
 import random
-from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable
 from weakref import WeakValueDictionary
 
 from sqlalchemy import func, or_
@@ -19,7 +18,6 @@ from app.services.inbox_manager import inbox_manager
 
 
 ACTIVE_JOB_STATES = {"queued", "running"}
-MAX_CONSECUTIVE_FAILURES = 5  # Berhenti per-akun setelah gagal berturut-turut
 MIN_SEND_DELAY_SECONDS = 0.0
 PEER_FLOOD_COOLDOWN_SECONDS = int(os.getenv("PEER_FLOOD_COOLDOWN_SECONDS", "86400"))
 
@@ -110,6 +108,7 @@ class BlastManager:
 
             unavailable_ids = set()
             while available_ids and not self._stop_flags.get(job_id, False):
+                account_id = available_ids[0]
                 with SessionLocal() as db:
                     job = db.get(BlastJob, job_id)
                     recipients = db.query(BlastRecipient).filter(
@@ -118,28 +117,18 @@ class BlastManager:
                     ).order_by(BlastRecipient.sort_order).all()
                     if not recipients:
                         break
-                    for index, recipient in enumerate(recipients):
-                        if job.source == "sheet" or recipient.account_id not in available_ids:
-                            recipient.account_id = available_ids[index % len(available_ids)]
-                    db.commit()
-                    grouped: Dict[int, List[int]] = defaultdict(list)
                     for recipient in recipients:
-                        grouped[recipient.account_id].append(recipient.id)
+                        recipient.account_id = account_id
+                    recipient_ids = [recipient.id for recipient in recipients]
+                    db.commit()
 
-                account_ids = list(grouped)
-                results = await asyncio.gather(
-                    *(self._run_account_queue(job_id, account_id, grouped[account_id]) for account_id in account_ids),
-                    return_exceptions=True,
-                )
+                result = await self._run_account_queue(job_id, account_id, recipient_ids)
                 pool_changed = bool(pool_event and pool_event.is_set())
-                unavailable_ids.update({
-                    account_id for account_id, result in zip(account_ids, results)
-                    if isinstance(result, Exception)
-                    or result not in {"available", "refresh"}
-                })
                 if pool_changed:
                     unavailable_ids.clear()
                     pool_event.clear()
+                if result not in {"available", "refresh"}:
+                    unavailable_ids.add(account_id)
                 with SessionLocal() as db:
                     job = db.get(BlastJob, job_id)
                     refreshed_ids = self._available_account_ids(db, job, selected_ids)
@@ -156,8 +145,8 @@ class BlastManager:
                         BlastRecipient.status == "paused",
                     ).order_by(BlastRecipient.sort_order).all()
                     if paused and available_ids:
-                        for index, recipient in enumerate(paused):
-                            recipient.account_id = available_ids[index % len(available_ids)]
+                        for recipient in paused:
+                            recipient.account_id = available_ids[0]
                             recipient.status = "pending"
                             recipient.error = "Dialihkan otomatis ke akun berikutnya"
                             recipient.updated_at = datetime.utcnow()
@@ -260,7 +249,6 @@ class BlastManager:
                     return "unavailable"
 
                 ids = recipient_ids
-                consecutive_failures = 0
                 account_result = "available"
 
                 last_sent_at = account_snapshot["last_blast_sent_at"]
@@ -298,26 +286,9 @@ class BlastManager:
                         image_path=image_path,
                     )
 
-                    if send_result == "continue":
-                        # Berhasil / skipped — reset counter kegagalan
-                        consecutive_failures = 0
-
-                    elif send_result == "failed":
-                        # Gagal biasa — lanjut ke berikutnya, tambah counter
-                        consecutive_failures += 1
-                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                            remaining = ids[position + 1:]
-                            if remaining:
-                                with SessionLocal() as db:
-                                    self._pause_many(
-                                        db, remaining,
-                                        f"Dihentikan: {MAX_CONSECUTIVE_FAILURES} kegagalan berturut-turut"
-                                    )
-                                    self._refresh_counts(db, job_id)
-                            account_result = "exhausted"
-                            break
-
-                    elif send_result in ("floodwait", "peerflood"):
+                    # Target gagal bukan berarti akun dibatasi; hanya flood yang
+                    # memindahkan sisa antrean ke akun berikutnya.
+                    if send_result in ("floodwait", "peerflood"):
                         # Dibatasi Telegram — hentikan seluruh antrean akun ini
                         remaining = ids[position + 1:]
                         if remaining:
