@@ -2,6 +2,28 @@ const QUEUE_SHEET = 'Blast Otomatis';
 const DONE_SHEET = 'Selesai';
 const HEADERS = ['Username', 'Pesan', 'Interval (detik)', 'Kuota per job', 'ID', 'Jeda antar job (menit)', 'Diklaim pada', 'Status terakhir'];
 
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('Blast')
+    .addItem('Acak username', 'acakUsername')
+    .addToUi();
+}
+
+function acakUsername() {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(QUEUE_SHEET);
+  const count = sheet.getLastRow() - 2;
+  if (count < 2) return;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const claimed = sheet.getRange(3, 5, count, 1).getValues().some(([id]) => id);
+    if (claimed) throw new Error('Masih ada username yang sedang diproses; tunggu job selesai terlebih dahulu.');
+    sheet.getRange(3, 1, count, HEADERS.length).randomize();
+    SpreadsheetApp.getActive().toast(`${count} baris berhasil diacak`, 'Blast');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function siapkan() {
   const file = SpreadsheetApp.getActive();
   const queue = file.getSheetByName(QUEUE_SHEET);
